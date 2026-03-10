@@ -2,10 +2,13 @@
 
 import Link from 'next/link';
 import { useMemo, useState } from 'react';
-import { useAccount, useConfig } from 'wagmi';
+import { useAccount, useConfig, useWatchContractEvent } from 'wagmi';
 import { Loader2, ExternalLink } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useMarketExecutionLog, MarketExecutionMode } from '@/hooks/useMarketExecutionLog';
+import MeridianMarketABI from '@/lib/abi/MeridianMarket.json';
+
+const MARKET_ADDRESS = process.env.NEXT_PUBLIC_MERIDIAN_MARKET_ADDRESS as `0x${string}`;
 
 function shortAddress(addr: string): string {
   if (!addr) return '—';
@@ -55,6 +58,21 @@ export function MarketActivity({
   const [mode, setMode] = useState<MarketExecutionMode>(initialMode);
   const [visibleCount, setVisibleCount] = useState(20);
   const { data: events = [], isLoading, refetch } = useMarketExecutionLog(marketId, mode);
+
+  useWatchContractEvent({
+    address: MARKET_ADDRESS,
+    abi: MeridianMarketABI.abi as any,
+    eventName: 'OrderFilled',
+    onLogs(logs) {
+      const hasRelevantFill = logs.some((log: any) => {
+        const logMarketId = String(log.args?.marketId ?? '').toLowerCase();
+        return logMarketId === marketId.toLowerCase();
+      });
+      if (hasRelevantFill) {
+        refetch();
+      }
+    },
+  });
 
   const visibleEvents = useMemo(
     () => events.slice(0, visibleCount),

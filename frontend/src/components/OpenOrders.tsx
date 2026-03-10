@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useAccount, useWriteContract, useConfig } from 'wagmi';
+import { useAccount, useWriteContract, useConfig, useWatchContractEvent } from 'wagmi';
 import { getPublicClient } from '@wagmi/core';
 import { parseAbiItem } from 'viem';
 import MeridianMarketABI from '@/lib/abi/MeridianMarket.json';
@@ -18,6 +18,9 @@ const ORDER_PLACED_ABI = parseAbiItem(
 const ORDER_CANCELLED_ABI = parseAbiItem(
   'event OrderCancelled(uint256 indexed orderId, address indexed owner, uint128 remainingQty)'
 );
+const ORDER_FILLED_ABI = parseAbiItem(
+  'event OrderFilled(bytes32 indexed marketId, uint256 indexed orderId, address indexed maker, address taker, uint8 side, uint8 priceCents, uint128 qty)'
+);
 
 interface OpenOrder {
   orderId: bigint;
@@ -33,6 +36,7 @@ export function OpenOrders({ marketId }: { marketId: `0x${string}` }) {
   const [orders, setOrders] = useState<OpenOrder[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [cancellingId, setCancellingId] = useState<bigint | null>(null);
+  const [refreshTick, setRefreshTick] = useState(0);
 
   useEffect(() => {
     if (!address || !isConnected || !marketId) return;
@@ -79,7 +83,48 @@ export function OpenOrders({ marketId }: { marketId: `0x${string}` }) {
     };
 
     load();
-  }, [address, isConnected, marketId, config]);
+  }, [address, isConnected, marketId, config, refreshTick]);
+
+  useWatchContractEvent({
+    address: MARKET_ADDRESS,
+    abi: MeridianMarketABI.abi,
+    eventName: 'OrderPlaced',
+    onLogs(logs) {
+      const hasRelevant = logs.some((log: any) => {
+        const logMarketId = String(log.args?.marketId ?? '').toLowerCase();
+        const owner = String(log.args?.owner ?? '').toLowerCase();
+        return logMarketId === marketId.toLowerCase() && owner === address?.toLowerCase();
+      });
+      if (hasRelevant) setRefreshTick((v) => v + 1);
+    },
+  });
+
+  useWatchContractEvent({
+    address: MARKET_ADDRESS,
+    abi: MeridianMarketABI.abi,
+    eventName: 'OrderCancelled',
+    onLogs(logs) {
+      const hasRelevant = logs.some(
+        (log: any) => String(log.args?.owner ?? '').toLowerCase() === address?.toLowerCase()
+      );
+      if (hasRelevant) setRefreshTick((v) => v + 1);
+    },
+  });
+
+  // If user's resting order is filled as maker, open orders list should update.
+  useWatchContractEvent({
+    address: MARKET_ADDRESS,
+    abi: MeridianMarketABI.abi,
+    eventName: 'OrderFilled',
+    onLogs(logs) {
+      const hasRelevant = logs.some((log: any) => {
+        const logMarketId = String(log.args?.marketId ?? '').toLowerCase();
+        const maker = String(log.args?.maker ?? '').toLowerCase();
+        return logMarketId === marketId.toLowerCase() && maker === address?.toLowerCase();
+      });
+      if (hasRelevant) setRefreshTick((v) => v + 1);
+    },
+  });
 
   const handleCancel = async (orderId: bigint) => {
     setCancellingId(orderId);
