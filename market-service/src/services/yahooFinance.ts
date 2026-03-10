@@ -17,7 +17,7 @@ import { config } from "../config.js";
 // Mimic a browser User-Agent so cloud datacenter IPs are not blocked by Yahoo.
 // Railway (and most cloud providers) get their IP ranges rejected by Yahoo's
 // servers unless the request looks like it came from a real browser.
-yahooFinance.setOptions({
+yahooFinance.options({
   fetchOptions: {
     headers: {
       "User-Agent":
