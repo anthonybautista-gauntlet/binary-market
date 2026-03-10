@@ -51,7 +51,10 @@ export function OpenOrders({ marketId }: { marketId: `0x${string}` }) {
           publicClient.getLogs({
             address: MARKET_ADDRESS,
             event: ORDER_PLACED_ABI,
-            args: { marketId, owner: address },
+            // Filter by owner only. Some public RPCs can under-return when
+            // multiple indexed args are combined in a single log query.
+            // We then filter marketId client-side for correctness.
+            args: { owner: address },
             fromBlock: DEPLOYMENT_BLOCK,
           }).catch(() => []),
           publicClient.getLogs({
@@ -69,6 +72,8 @@ export function OpenOrders({ marketId }: { marketId: `0x${string}` }) {
           await Promise.all(
             placed.map(async (log) => {
               const { orderId, side, priceCents, quantity } = log.args as any;
+              const logMarketId = String(log.args?.marketId ?? '').toLowerCase();
+              if (logMarketId !== marketId.toLowerCase()) return null;
               if (cancelledIds.has(String(orderId))) return null;
 
               const oid = BigInt(orderId);
@@ -79,8 +84,12 @@ export function OpenOrders({ marketId }: { marketId: `0x${string}` }) {
                 abi: MeridianMarketABI.abi as any,
                 functionName: 'orderOwner',
                 args: [oid],
-              }).catch(() => '0x0000000000000000000000000000000000000000');
-              if (String(currentOwner).toLowerCase() !== expectedOwner) return null;
+              }).catch(() => null);
+
+              // If owner lookup succeeds and is not the wallet, this order is not open for user.
+              // If lookup fails (transient RPC issue), we still keep the event-derived candidate
+              // and let subsequent polling/events reconcile.
+              if (currentOwner && String(currentOwner).toLowerCase() !== expectedOwner) return null;
 
               // Derive remaining qty by subtracting fills for this order.
               const fills = await publicClient.getLogs({
