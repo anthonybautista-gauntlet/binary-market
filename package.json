@@ -1,0 +1,12 @@
+{
+  "name": "binary-market",
+  "version": "0.0.1",
+  "private": true,
+  "workspaces": [
+    "frontend"
+  ],
+  "scripts": {
+    "frontend:dev": "npm run dev --workspace=frontend",
+    "frontend:build": "npm run build --workspace=frontend"
+  }
+}

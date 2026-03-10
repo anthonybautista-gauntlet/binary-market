@@ -1,0 +1,26 @@
+# Foundry build artifacts
+contracts/cache/
+contracts/out/
+
+# Ignores development broadcast logs
+!/broadcast
+contracts/broadcast/*/31337/
+contracts/broadcast/**/dry-run/
+
+# Docs
+docs/
+
+# Dotenv files
+.env
+contracts/.env
+
+# Node / npm workspace
+node_modules/
+package-lock.json
+
+# Frontend
+frontend/node_modules/
+frontend/package-lock.json
+frontend/.next/
+frontend/dist/
+frontend/build/

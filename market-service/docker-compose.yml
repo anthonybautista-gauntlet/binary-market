@@ -1,0 +1,14 @@
+services:
+  market-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      # Load env vars from contracts/.env for local development.
+      # Copy .env.example to .env and fill in values.
+      - .env
+    environment:
+      - NODE_ENV=development
+      - LOG_LEVEL=debug
+    restart: unless-stopped
+    # No ports needed — this is a pure background worker

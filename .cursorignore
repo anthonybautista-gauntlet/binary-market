@@ -1,0 +1,20 @@
+# Foundry build artifacts
+contracts/out/
+contracts/cache/
+
+# Broadcast logs
+contracts/broadcast/
+
+# Coverage reports
+lcov.info
+coverage/
+
+# Frontend dependencies and build output
+frontend/node_modules/
+frontend/.next/
+frontend/dist/
+frontend/build/
+
+# env files
+contracts/.env
+frontend/.env

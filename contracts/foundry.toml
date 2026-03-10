@@ -1,0 +1,22 @@
+[profile.default]
+src = "src"
+out = "out"
+libs = ["lib"]
+
+remappings = [
+    "@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/",
+    "@pythnetwork/pyth-sdk-solidity/=lib/pyth-sdk-solidity/",
+    "forge-std/=lib/forge-std/src/",
+]
+
+# via_ir enables the Yul IR pipeline, required to avoid stack-too-deep in OrderBookLib
+via_ir = true
+
+# Optimizer keeps MeridianMarket under the 24KB EVM contract size limit
+optimizer = true
+optimizer_runs = 10
+
+# Suppress the malformed Natspec doc tag error from the deprecated Pyth SDK library (error 6546)
+ignored_error_codes = [6546]
+
+# See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options
