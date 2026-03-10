@@ -18,7 +18,12 @@ import {
 import { config } from "../config.js";
 import { logger } from "../logger.js";
 import MeridianMarketAbi from "../abi/MeridianMarket.json" with { type: "json" };
-import MockUSDCAbi from "../abi/MockUSDC.json" with { type: "json" };
+import MockUSDCAbiJson from "../abi/MockUSDC.json" with { type: "json" };
+
+// MockUSDC.json is a Foundry artifact: { abi: [...], bytecode: ... }
+// MeridianMarket.json is a raw ABI array — no unwrapping needed.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const MockUSDCAbi = (MockUSDCAbiJson as any).abi as readonly object[];
 
 // ── Side enum (mirrors OrderBookLib.Side) ────────────────────────────────────
 
