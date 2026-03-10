@@ -8,6 +8,7 @@ import { PYTH_FEED_IDS } from '@/constants/assets';
 import { OrderBook } from '@/components/OrderBook';
 import { TradePanel } from '@/components/TradePanel';
 import { OpenOrders } from '@/components/OpenOrders';
+import { MarketActivity } from '@/components/MarketActivity';
 import { SettlementCountdown } from '@/components/SettlementCountdown';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Card } from '@/components/ui/card';
@@ -100,6 +101,7 @@ export default function MarketDetailPage({ params }: { params: Promise<{ id: str
           <div className="lg:col-span-1 order-2 lg:order-1 space-y-4">
             <OrderBook marketId={marketId} />
             <OpenOrders marketId={marketId} />
+            <MarketActivity marketId={marketId} />
           </div>
 
           <div className="lg:col-span-2 order-1 lg:order-2 space-y-8">

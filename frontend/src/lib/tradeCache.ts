@@ -1,7 +1,7 @@
 import { openDB, IDBPDatabase } from 'idb';
 
 const DB_NAME = 'meridian';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
 export type TradeEventType = 'OrderFilled' | 'PairMinted' | 'Redeemed';
 
@@ -33,8 +33,30 @@ export interface TradeEvent {
   payout?: bigint;
 }
 
+export interface MarketExecutionEvent {
+  // Composite primary key: unique across all logs
+  id: string; // `${txHash}-${logIndex}`
+  chainId: number; // (indexed)
+  marketId: string; // (indexed)
+  blockNumber: number; // (indexed)
+  txHash: string;
+  logIndex: number;
+  timestamp?: number; // block timestamp if available
+  maker: string;
+  taker: string;
+  side: number; // taker side: 0=BID, 1=ASK
+  priceCents: number;
+  qty: bigint;
+}
+
 interface CursorRecord {
   id: string; // `${wallet}_${chainId}`
+  lastBlock: number;
+  updatedAt: number;
+}
+
+interface MarketCursorRecord {
+  id: string; // `${chainId}_${marketId}`
   lastBlock: number;
   updatedAt: number;
 }
@@ -54,6 +76,20 @@ type MeridianDB = {
     key: string;
     value: CursorRecord;
   };
+  marketExecutionEvents: {
+    key: string;
+    value: MarketExecutionEvent;
+    indexes: {
+      byChain: number;
+      byMarket: string;
+      byBlock: number;
+      byChainAndMarket: [number, string];
+    };
+  };
+  marketExecutionCursors: {
+    key: string;
+    value: MarketCursorRecord;
+  };
 };
 
 let dbPromise: Promise<IDBPDatabase<MeridianDB>> | null = null;
@@ -71,6 +107,16 @@ function getDB(): Promise<IDBPDatabase<MeridianDB>> {
         }
         if (!db.objectStoreNames.contains('cursors')) {
           db.createObjectStore('cursors', { keyPath: 'id' });
+        }
+        if (!db.objectStoreNames.contains('marketExecutionEvents')) {
+          const store = db.createObjectStore('marketExecutionEvents', { keyPath: 'id' });
+          store.createIndex('byChain', 'chainId', { unique: false });
+          store.createIndex('byMarket', 'marketId', { unique: false });
+          store.createIndex('byBlock', 'blockNumber', { unique: false });
+          store.createIndex('byChainAndMarket', ['chainId', 'marketId'], { unique: false });
+        }
+        if (!db.objectStoreNames.contains('marketExecutionCursors')) {
+          db.createObjectStore('marketExecutionCursors', { keyPath: 'id' });
         }
       },
     });
@@ -113,4 +159,57 @@ export async function clearCacheForWallet(wallet: string, chainId: number): Prom
     tx.objectStore('cursors').delete(key),
     tx.done,
   ]);
+}
+
+function marketCursorKey(chainId: number, marketId: string): string {
+  return `${chainId}_${marketId.toLowerCase()}`;
+}
+
+export async function getMarketExecutionCursor(
+  chainId: number,
+  marketId: string
+): Promise<number | null> {
+  const db = await getDB();
+  const key = marketCursorKey(chainId, marketId);
+  const record = await db.get('marketExecutionCursors', key);
+  return record?.lastBlock ?? null;
+}
+
+export async function setMarketExecutionCursor(
+  chainId: number,
+  marketId: string,
+  lastBlock: number
+): Promise<void> {
+  const db = await getDB();
+  const key = marketCursorKey(chainId, marketId);
+  await db.put('marketExecutionCursors', {
+    id: key,
+    lastBlock,
+    updatedAt: Date.now(),
+  });
+}
+
+export async function saveMarketExecutionEvents(
+  events: MarketExecutionEvent[]
+): Promise<void> {
+  if (events.length === 0) return;
+  const db = await getDB();
+  const tx = db.transaction('marketExecutionEvents', 'readwrite');
+  await Promise.all([...events.map((e) => tx.store.put(e)), tx.done]);
+}
+
+export async function getMarketExecutionEvents(
+  chainId: number,
+  marketId: string
+): Promise<MarketExecutionEvent[]> {
+  const db = await getDB();
+  const events = await db.getAllFromIndex(
+    'marketExecutionEvents',
+    'byChainAndMarket',
+    [chainId, marketId.toLowerCase()]
+  );
+  return events.sort((a, b) => {
+    if (a.blockNumber !== b.blockNumber) return b.blockNumber - a.blockNumber;
+    return b.logIndex - a.logIndex;
+  });
 }
