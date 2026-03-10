@@ -14,19 +14,18 @@ import yahooFinance from "yahoo-finance2";
 import { logger } from "../logger.js";
 import { config } from "../config.js";
 
+export type TickerPrices = Record<string, number>;
+
 // Mimic a browser User-Agent so cloud datacenter IPs are not blocked by Yahoo.
-// Railway (and most cloud providers) get their IP ranges rejected by Yahoo's
-// servers unless the request looks like it came from a real browser.
-yahooFinance.options({
+// Passed per-request via moduleOptions (v3 doesn't allow options() on the singleton).
+const YAHOO_MODULE_OPTIONS = {
   fetchOptions: {
     headers: {
       "User-Agent":
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
     },
   },
-});
-
-export type TickerPrices = Record<string, number>;
+} as const;
 
 /**
  * Fetch the most recent closing prices for all configured MAG7 tickers.
@@ -41,7 +40,7 @@ export async function fetchYahooClosingPrices(): Promise<TickerPrices> {
     config.tickers.map(async (ticker) => {
       try {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const quote: any = await yahooFinance.quote(ticker);
+        const quote: any = await yahooFinance.quote(ticker, {}, YAHOO_MODULE_OPTIONS);
         const price: number | undefined = quote?.regularMarketPrice ?? quote?.regularMarketClose;
         if (price == null || price <= 0) {
           logger.warn({ ticker }, "Yahoo Finance returned null/zero price");
