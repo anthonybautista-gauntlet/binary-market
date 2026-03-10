@@ -282,6 +282,11 @@
         "internalType": "bytes32"
       },
       {
+        "name": "quantity",
+        "type": "uint128",
+        "internalType": "uint128"
+      },
+      {
         "name": "limitYesSalePrice",
         "type": "uint8",
         "internalType": "uint8"
@@ -298,6 +303,11 @@
         "name": "marketId",
         "type": "bytes32",
         "internalType": "bytes32"
+      },
+      {
+        "name": "quantity",
+        "type": "uint128",
+        "internalType": "uint128"
       },
       {
         "name": "minYesSaleProceeds",
@@ -649,6 +659,11 @@
         "name": "marketId",
         "type": "bytes32",
         "internalType": "bytes32"
+      },
+      {
+        "name": "quantity",
+        "type": "uint128",
+        "internalType": "uint128"
       }
     ],
     "outputs": [],
@@ -1495,6 +1510,55 @@
       },
       {
         "name": "remainingQty",
+        "type": "uint128",
+        "indexed": false,
+        "internalType": "uint128"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "OrderFilled",
+    "inputs": [
+      {
+        "name": "marketId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "orderId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "maker",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "taker",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      },
+      {
+        "name": "side",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "uint8"
+      },
+      {
+        "name": "priceCents",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "uint8"
+      },
+      {
+        "name": "qty",
         "type": "uint128",
         "indexed": false,
         "internalType": "uint128"

@@ -16,5 +16,4 @@ frontend/dist/
 frontend/build/
 
 # env files
-contracts/.env
-frontend/.env
+**/.env
