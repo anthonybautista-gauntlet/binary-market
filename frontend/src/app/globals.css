@@ -1,0 +1,116 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-inter);
+  --font-outfit: var(--font-outfit);
+  --color-border: var(--border);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --radius-lg: var(--radius);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-sm: calc(var(--radius) * 0.6);
+}
+
+:root {
+  --background: 222 47% 1%;
+  --foreground: 210 40% 98%;
+  --card: 222 47% 2%;
+  --card-foreground: 210 40% 98%;
+  --popover: 222 47% 2%;
+  --popover-foreground: 210 40% 98%;
+  --primary: 217 91% 60%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 222 47% 6%;
+  --secondary-foreground: 210 40% 98%;
+  --muted: 222 47% 6%;
+  --muted-foreground: 215 20.2% 65.1%;
+  --accent: 222 47% 6%;
+  --accent-foreground: 210 40% 98%;
+  --destructive: 0 62.8% 30.6%;
+  --destructive-foreground: 210 40% 98%;
+  --border: 217 32% 12%;
+  --input: 217 32% 12%;
+  --ring: 224 76% 48%;
+  --radius: 0.75rem;
+}
+
+.dark {
+  --background: 222 47% 1%;
+  --foreground: 210 40% 98%;
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground antialiased;
+    background: radial-gradient(circle at 10% 20%, rgba(3, 7, 18, 1) 0%, rgba(3, 7, 18, 1) 100%);
+    position: relative;
+    min-height: 100vh;
+  }
+  body::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: 
+      radial-gradient(circle at 20% 30%, rgba(37, 99, 235, 0.05) 0%, transparent 40%),
+      radial-gradient(circle at 80% 70%, rgba(124, 58, 237, 0.05) 0%, transparent 40%);
+    pointer-events: none;
+    z-index: -1;
+  }
+}
+
+.glass {
+  background: rgba(15, 23, 42, 0.6);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.animate-glow {
+  animation: glow 4s ease-in-out infinite alternate;
+}
+
+@keyframes glow {
+  from {
+    filter: drop-shadow(0 0 5px rgba(37, 99, 235, 0.3));
+  }
+  to {
+    filter: drop-shadow(0 0 15px rgba(37, 99, 235, 0.5));
+  }
+}
+
+/* Hide number input spinners */
+input::-webkit-outer-spin-button,
+input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+input[type="number"] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}

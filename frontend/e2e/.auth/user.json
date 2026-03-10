@@ -1,0 +1,46 @@
+{
+  "cookies": [],
+  "origins": [
+    {
+      "origin": "http://localhost:3000",
+      "localStorage": [
+        {
+          "name": "rk-version",
+          "value": "2.2.10"
+        },
+        {
+          "name": "rk-latest-id",
+          "value": "io.playwright.mockwallet"
+        },
+        {
+          "name": "rk-recent",
+          "value": "[\"io.playwright.mockwallet\"]"
+        },
+        {
+          "name": "base-acc-sdk.store",
+          "value": "{\"state\":{\"chains\":[],\"keys\":{},\"account\":{},\"spendPermissions\":[],\"config\":{\"version\":\"2.4.0\",\"metadata\":{\"appName\":\"Meridian Market\",\"appLogoUrl\":\"\",\"appChainIds\":[84532]},\"preference\":{\"telemetry\":false,\"options\":\"all\"}}},\"version\":0}"
+        },
+        {
+          "name": "@appkit/connection_status",
+          "value": "disconnected"
+        },
+        {
+          "name": "@appkit/active_namespace",
+          "value": "eip155"
+        },
+        {
+          "name": "wagmi.recentConnectorId",
+          "value": "\"io.playwright.mockwallet\""
+        },
+        {
+          "name": "wagmi.store",
+          "value": "{\"state\":{\"connections\":{\"__type\":\"Map\",\"value\":[[\"c4a7f6c2be0\",{\"accounts\":[\"0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266\"],\"chainId\":84532,\"connector\":{\"id\":\"io.playwright.mockwallet\",\"name\":\"Browser Wallet\",\"type\":\"injected\",\"uid\":\"c4a7f6c2be0\"}}]]},\"chainId\":84532,\"current\":\"c4a7f6c2be0\"},\"version\":2}"
+        },
+        {
+          "name": "@appkit/active_caip_network_id",
+          "value": "eip155:84532"
+        }
+      ]
+    }
+  ]
+}
