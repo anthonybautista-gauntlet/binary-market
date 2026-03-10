@@ -20,12 +20,12 @@ import {
   getPrevTradingDay,
 } from "../services/calendarService.js";
 import { fetchPricesAtTime } from "../services/hermesClient.js";
+import { fetchYahooClosingPrices, dollarsToPythUnits } from "../services/yahooFinance.js";
 import { computeStrikes, pythUnitsToDollars } from "../services/strikeCalc.js";
 import {
   computeMarketId,
   getMarketExpiry,
   createStrikeMarket,
-  bytes32ToTicker,
 } from "../contracts/marketContract.js";
 
 const log = jobLogger("createMarkets");
@@ -66,23 +66,61 @@ export async function runCreateMarkets(): Promise<void> {
     "Fetching previous-day closing prices from Hermes"
   );
 
-  let hermesPrices;
+  // ── 3a. Try Hermes; fall back to Yahoo Finance on failure ─────────────────
+  const refPriceByTicker = new Map<string, bigint>();
+
+  let hermesOk = false;
   try {
-    hermesPrices = await fetchPricesAtTime(allFeedIds, prevCloseUnix);
+    const hermesPrices = await fetchPricesAtTime(allFeedIds, prevCloseUnix);
+    if (hermesPrices.parsed.length === 0) {
+      throw new Error("Hermes returned no parsed prices");
+    }
+    const priceByFeed = new Map(
+      hermesPrices.parsed.map((p) => [p.feedId.replace(/^0x/, "").toLowerCase(), p])
+    );
+    for (const ticker of config.tickers) {
+      const feedId = config.feeds[ticker].replace(/^0x/, "").toLowerCase();
+      const p = priceByFeed.get(feedId);
+      if (p) refPriceByTicker.set(ticker, p.price);
+    }
+    hermesOk = true;
+    log.info({ tickers: [...refPriceByTicker.keys()] }, "Hermes prices loaded");
   } catch (err) {
-    log.error({ err }, "Failed to fetch prices from Hermes — aborting market creation");
-    return;
+    log.warn({ err }, "Hermes fetch failed — falling back to Yahoo Finance for strike prices");
   }
 
-  if (hermesPrices.parsed.length === 0) {
-    log.error("Hermes returned no parsed prices — aborting");
-    return;
+  // ── 3b. Yahoo Finance fallback ────────────────────────────────────────────
+  if (!hermesOk) {
+    let yahooPrice: Record<string, number>;
+    try {
+      yahooPrice = await fetchYahooClosingPrices();
+    } catch (err) {
+      log.error({ err }, "Yahoo Finance fallback also failed — aborting market creation");
+      return;
+    }
+
+    if (Object.keys(yahooPrice).length === 0) {
+      log.error("Yahoo Finance returned no prices — aborting market creation");
+      return;
+    }
+
+    log.info(
+      { prices: Object.fromEntries(Object.entries(yahooPrice).map(([t, p]) => [t, p.toFixed(2)])) },
+      "Using Yahoo Finance prices as fallback for strike computation"
+    );
+
+    for (const ticker of config.tickers) {
+      const dollars = yahooPrice[ticker];
+      if (dollars != null && dollars > 0) {
+        refPriceByTicker.set(ticker, dollarsToPythUnits(dollars));
+      }
+    }
   }
 
-  // Build feedId → ParsedPrice map
-  const priceByFeed = new Map(
-    hermesPrices.parsed.map((p) => [p.feedId.replace(/^0x/, "").toLowerCase(), p])
-  );
+  if (refPriceByTicker.size === 0) {
+    log.error("No reference prices available from any source — aborting market creation");
+    return;
+  }
 
   // ── 4. Process each ticker ────────────────────────────────────────────────
   let totalCreated = 0;
@@ -90,15 +128,13 @@ export async function runCreateMarkets(): Promise<void> {
   let totalErrors = 0;
 
   for (const ticker of config.tickers) {
-    const feedId = config.feeds[ticker].replace(/^0x/, "").toLowerCase();
-    const parsedPrice = priceByFeed.get(feedId);
+    const refPrice = refPriceByTicker.get(ticker);
 
-    if (!parsedPrice) {
-      log.warn({ ticker, feedId }, "No Hermes price returned for ticker — skipping");
+    if (!refPrice) {
+      log.warn({ ticker }, "No reference price available for ticker — skipping");
       continue;
     }
 
-    const refPrice = parsedPrice.price;
     log.info(
       { ticker, refPrice: refPrice.toString(), display: pythUnitsToDollars(refPrice) },
       "Computing strikes"

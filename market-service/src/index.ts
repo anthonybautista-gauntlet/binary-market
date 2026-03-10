@@ -25,6 +25,7 @@ import { runSettleMarkets } from "./jobs/settleMarkets.js";
 import { runAdminSettle } from "./jobs/adminSettle.js";
 import { runPricePusher } from "./jobs/pricePusher.js";
 import { getProvider } from "./contracts/marketContract.js";
+import { isTradingDay, getMarketCloseTime } from "./services/calendarService.js";
 
 const TIMEZONE = "America/New_York";
 
@@ -112,6 +113,16 @@ async function main(): Promise<void> {
   // already-settled markets and markets not yet past their delay window.
   safeRun("settleMarkets", runSettleMarkets)();
   safeRun("adminSettle", runAdminSettle)();
+
+  // Run createMarkets on startup if it's a trading day and the market hasn't
+  // closed yet. The job is fully idempotent — it skips markets that already
+  // exist — so restarting mid-day is safe and fills in any markets that were
+  // missed (e.g. due to a Pyth outage at 08:00).
+  const now = new Date();
+  if (isTradingDay(now) && now < getMarketCloseTime(now)) {
+    logger.info("Startup: running createMarkets catch-up check");
+    safeRun("createMarkets", runCreateMarkets)();
+  }
 
   logger.info("All jobs scheduled — service is running");
 }
