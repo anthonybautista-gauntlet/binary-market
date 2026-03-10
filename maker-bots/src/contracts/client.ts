@@ -250,7 +250,9 @@ export async function mintPair(
   quantity: bigint
 ): Promise<void> {
   logger.debug({ marketId, quantity: quantity.toString() }, "mintPair");
-  const tx = await marketWrite(wallet).mintPair(marketId, quantity);
+  // Explicit gasLimit skips eth_estimateGas — avoids stale-read failures on
+  // public load-balanced RPC endpoints (read-your-writes inconsistency).
+  const tx = await marketWrite(wallet).mintPair(marketId, quantity, { gasLimit: 300_000n });
   await tx.wait();
 }
 
@@ -273,7 +275,10 @@ export async function placeOrder(
     "placeOrder"
   );
   const contract = marketWrite(wallet);
-  const tx = await contract.placeOrder(marketId, side, priceCents, quantity, isIOC);
+  // Explicit gasLimit skips eth_estimateGas — avoids stale-read failures on
+  // public load-balanced RPC endpoints (read-your-writes inconsistency).
+  // 1.5M covers resting orders (avg ~290k) and several crossing fills comfortably.
+  const tx = await contract.placeOrder(marketId, side, priceCents, quantity, isIOC, { gasLimit: 1_500_000n });
   const receipt = await tx.wait();
 
   // Parse OrderPlaced event to extract the orderId
@@ -303,7 +308,9 @@ export async function bulkCancelOrders(
 ): Promise<void> {
   if (orderIds.length === 0) return;
   logger.debug({ count: orderIds.length }, "bulkCancelOrders");
-  const tx = await marketWrite(wallet).bulkCancelOrders(orderIds);
+  // Max observed: 156k. Scale with order count; 500k covers ~25 orders safely.
+  const gasLimit = BigInt(Math.max(200_000, orderIds.length * 20_000));
+  const tx = await marketWrite(wallet).bulkCancelOrders(orderIds, { gasLimit });
   await tx.wait();
   logger.debug({ count: orderIds.length }, "Orders cancelled");
 }

@@ -156,19 +156,24 @@ If deploying from scratch, `Deploy.s.sol` will grant both roles automatically if
 
 **Schedule**: `0 8 * * 1-5` (08:00 ET, Mon–Fri)
 
+**Also runs on startup** if today is a trading day and the current time is before market close. This catch-up behaviour means restarting the service mid-morning after any outage will automatically create any markets that were missed.
+
 **What it does:**
 
 1. Checks whether today is a NYSE trading day using `date-holidays` (NYSE locale). Exits early if not.
 2. Determines today's market expiry timestamp:
    - Regular day: `today at 16:00 ET`
    - Early-close day (day before July 4th, day after Thanksgiving, Christmas Eve): `today at 13:00 ET`
-3. Finds the previous trading day and fetches all 7 MAG7 closing prices from Pyth Hermes at that day's 16:00 ET timestamp.
-4. For each ticker, computes up to 7 strike bins:
-   - Offsets from the reference price: −9%, −6%, −3%, 0% (ATM), +3%, +6%, +9%
+3. Fetches current live prices for all 7 MAG7 tickers from Pyth Hermes (`/v2/updates/price/latest`).
+4. If Hermes is unavailable, falls back to Yahoo Finance closing prices (see [Yahoo Finance fallback](#yahoo-finance-fallback)).
+5. For each ticker, computes up to 7 strike bins from the reference price:
+   - Offsets: −9%, −6%, −3%, 0% (ATM), +3%, +6%, +9%
    - Each strike is rounded to the nearest $10.00 (1,000,000 Pyth units at expo −5)
    - Duplicate strikes (common for lower-priced stocks) are silently deduplicated
-5. For each (ticker, strike, expiry) triple, computes the deterministic `marketId` and calls `market.markets(marketId)` to check whether it already exists on-chain.
-6. Calls `createStrikeMarket(ticker, strikePrice, expiryTimestamp)` for each market that does not yet exist.
+6. For each (ticker, strike, expiry) triple, computes the deterministic `marketId` and calls `market.markets(marketId)` to check whether it already exists on-chain.
+7. Calls `createStrikeMarket(ticker, strikePrice, expiryTimestamp)` for each market that does not yet exist.
+
+**Why current price instead of yesterday's close:** The `/v2/updates/price/latest` Hermes endpoint is the same reliable endpoint used by the pricePusher job. Historical Hermes endpoints for equity feeds are unreliable — equity prices are only published during NYSE hours and the feed may have no data for a given historical timestamp. Using the current live price also means today's strikes are centered on today's actual market level rather than the previous day's close, which is strictly better for users.
 
 **Guardrail**: The on-chain existence check before each creation call makes this job fully idempotent. Re-running it will skip any already-created markets and will not revert.
 
@@ -233,6 +238,35 @@ This job is the automatic fallback for markets that could not be settled by `set
 
 ---
 
+### Yahoo Finance fallback
+
+Both `createMarkets` and `adminSettle` use Yahoo Finance as a fallback price source. The two use-cases are distinct:
+
+| Job | When Yahoo Finance is used | What it fetches |
+|---|---|---|
+| `createMarkets` | Pyth Hermes `/latest` returns an error or times out | `regularMarketPrice` from `yahooFinance.quote()` — the most recent trade price |
+| `adminSettle` | Always (it is the primary source for admin settlement) | `regularMarketPrice` — reflects the official closing price after 16:00 ET |
+
+**Implementation detail — cloud environment compatibility:**
+
+`yahoo-finance2` v3.x performs crumb validation by default. In cloud environments (Railway, Docker) the default HTTP fetch headers are often fingerprinted and rejected by Yahoo's servers, causing all quote requests to silently fail. To work around this, every `yahooFinance.quote()` call passes a `fetchOptions` override with a browser `User-Agent` header:
+
+```typescript
+const YAHOO_MODULE_OPTIONS = {
+  fetchOptions: {
+    headers: {
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) ...",
+    },
+  },
+};
+
+const quote = await yahooFinance.quote(ticker, {}, YAHOO_MODULE_OPTIONS);
+```
+
+This is passed as the third `moduleOptions` argument (per-request override), not as a global `options()` call. Using the global `options()` API on the default import causes a crash in v3.x because the default export is the class itself, not a pre-instantiated singleton.
+
+---
+
 ### pricePusher
 
 **Schedule**: Every `PRICE_PUSHER_INTERVAL_MIN` minutes (default: 60)
@@ -289,7 +323,8 @@ src/
 │   │                         Primary: date-holidays (NYSE locale). Fallback: hardcoded 2026 list.
 │   ├── hermesClient.ts       Pyth Hermes API client: fetchLatestPrices, fetchPricesAtTime (with retry)
 │   ├── strikeCalc.ts         Strike bin math: integer mirror of Solidity _computeStrikes/_roundToTen
-│   └── yahooFinance.ts       Yahoo Finance price fetcher for admin settlement fallback
+│   └── yahooFinance.ts       Yahoo Finance price fetcher — used by adminSettle (primary) and createMarkets
+│                             (fallback). Passes per-request browser User-Agent headers to work in cloud envs.
 │
 ├── contracts/
 │   ├── marketContract.ts     ethers.js wrappers: createStrikeMarket, settleMarket, adminSettleOverride, etc.
@@ -307,7 +342,7 @@ src/
 
 Strike bins are computed identically to the Solidity script in `contracts/script/CreateMarkets.s.sol`. The TypeScript implementation in `src/services/strikeCalc.ts` uses `BigInt` arithmetic to avoid floating-point error.
 
-Reference price comes from Pyth Hermes at the previous trading day's 16:00 ET timestamp. All prices use Pyth's native units at exponent −5: `$1.00 = 100,000 units`, `$10.00 = 1,000,000 units`.
+Reference price comes from Pyth Hermes `/v2/updates/price/latest` at job runtime. If Hermes is unavailable, Yahoo Finance `regularMarketPrice` is used. All prices use Pyth's native units at exponent −5: `$1.00 = 100,000 units`, `$10.00 = 1,000,000 units`.
 
 **Offsets applied**: 91%, 94%, 97%, 100% (ATM), 103%, 106%, 109% of the reference price.
 
@@ -379,6 +414,9 @@ All six required variables must be set: `RPC_URL`, `MARKET_ADDRESS`, `PYTH_ADDRE
 
 **"RPC connection failed — check RPC_URL"**
 The RPC endpoint is unreachable or returning errors. Public endpoints (`https://sepolia.base.org`) are rate-limited; use a dedicated node provider for production.
+
+**createMarkets: "Failed to fetch prices from Hermes — falling back to Yahoo Finance"**
+Pyth Hermes `/latest` was unavailable or returned an error. The job will automatically retry with Yahoo Finance. If both fail, the job aborts and logs "Yahoo Finance returned no prices — aborting market creation". Restart the service or trigger the job manually once prices are available. This most commonly happens if the service starts before NYSE market open (when equity feeds are not yet publishing).
 
 **createMarkets: "UnsupportedTicker" revert**
 The MAG7 feeds have not been registered on the contract. Run `setSupportedFeed` for all 7 tickers from the deployer wallet (see `contracts/README.md` → Deployment).

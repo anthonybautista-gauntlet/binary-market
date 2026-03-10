@@ -159,12 +159,57 @@ fairValue   = 50 + tanh(x × timeWeight × MAKER_SENSITIVITY) × 50
 
 ---
 
+## Gas Limits
+
+All write calls in `src/contracts/client.ts` include explicit `gasLimit` overrides. This is intentional and important.
+
+### Why explicit gas limits?
+
+Ethers.js calls `eth_estimateGas` before every transaction when no `gasLimit` is provided. On public load-balanced RPC endpoints (including `https://sepolia.base.org`), this causes a **read-your-writes inconsistency**: `tx.wait()` confirms the previous transaction on node A, but the immediately-following `eth_estimateGas` call lands on node B which hasn't yet indexed that block. The simulation runs against stale state (e.g. a just-minted YES token balance reads as 0), causing a spurious revert before the transaction ever reaches the chain.
+
+By providing explicit gas limits, ethers.js skips `eth_estimateGas` entirely and sends transactions directly. The limits are set conservatively above worst-case measured usage so the transaction will always succeed if the on-chain logic would succeed.
+
+### Gas measurements (from `forge test --gas-report`)
+
+| Function | min | avg | median | max | Notes |
+|---|---|---|---|---|---|
+| `mintPair` | 131k | 137k | 133k | 253k | Measured across 91k test calls |
+| `placeOrder` | 25k | 290k | 275k | 5.2M | Max is 100-fill scenario; see below |
+| `bulkCancelOrders` | 86k | 123k | 126k | 156k | Measured for 3-order batches |
+
+### Limits set and rationale
+
+| Call | `gasLimit` | Rationale |
+|---|---|---|
+| `mintPair` | 300k | Max observed 253k; 300k gives ~20% headroom |
+| `placeOrder` | 1.5M | Resting order (0 fills): ~275k median. Each fill adds ~300–500k. 1.5M safely handles 2–3 simultaneous fills which is the realistic maker+buyer scenario. |
+| `bulkCancelOrders` | `max(200k, orders × 20k)` | Scales with the number of orders being cancelled; 200k minimum for the base tx cost |
+
+### Note on `placeOrder` gas scaling
+
+The order book is a sorted linked list. Gas scales linearly with the number of resting orders crossed (fills). The `test_gas_placeOrder_*` benchmarks show:
+
+| Fills | Total gas |
+|---|---|
+| 1 | ~1M |
+| 5 | ~3M |
+| 10 | ~5.4M |
+
+If you expect heavy crossing activity (e.g. the buyer bot has accumulated many BID orders), raise `MAKER_HALF_SPREAD` to reduce the probability of the maker's fresh ASK crossing into existing BIDs, or increase the `gasLimit` in `client.ts` accordingly.
+
+### Long-term fix
+
+Switching to a dedicated RPC provider (Alchemy, QuickNode, etc.) eliminates the read-your-writes issue and would allow removing the explicit gas limits. Public endpoints are load-balanced across nodes with independent block states.
+
+---
+
 ## Important Notes
 
 - **Testnet only for USDC minting** — `MockUSDC.mint()` has no access control and works on Base Sepolia. On mainnet you must fund the wallets with real USDC instead.
 - **Gas funding** — both wallets need ETH for gas. On Base Sepolia use the [Base faucet](https://www.coinbase.com/faucets/base-ethereum-goerli-faucet).
 - **Order state is in-memory** — restarting the service clears the order ID map. The maker will re-cancel by best-effort and re-quote fresh on the next cycle. Residual unfilled orders from before the restart remain on-chain until they expire or are manually cancelled.
 - **Single instance** — running multiple instances of the maker with the same wallet will cause nonce conflicts. Deploy exactly one instance per wallet.
+- **ABI sync** — the `src/abi/MeridianMarket.json` file must stay in sync with the deployed contract. After any contract redeployment, regenerate it: `cd contracts && forge build && cp out/MeridianMarket.sol/MeridianMarket.json ../maker-bots/src/abi/`
 
 ---
 
