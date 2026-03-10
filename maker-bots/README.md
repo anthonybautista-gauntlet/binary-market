@@ -203,6 +203,44 @@ Switching to a dedicated RPC provider (Alchemy, QuickNode, etc.) eliminates the 
 
 ---
 
+## Nonce Management
+
+With 40+ writes in a short maker cycle, nonce handling must be explicit. We use an MVP-safe approach now, and a different one for scaling later.
+
+### Current approach (MVP) — Option 1 (implemented)
+
+We intentionally chose a **single-writer per wallet** model in `src/contracts/client.ts` and `src/index.ts`:
+
+1. **Per-wallet serialized write queue**  
+   Every write tx (`mintPair`, `placeOrder`, `bulkCancelOrders`, approvals, `buyNoMarket`) is funneled through a wallet-local queue (concurrency = 1). This guarantees nonce order for each signer.
+
+2. **One-time nonce resync retry**  
+   If a write fails with nonce drift errors (`NONCE_EXPIRED`, `nonce too low`, `nonce has already been used`, `replacement transaction underpriced`), the bot resets the signer nonce cache and retries once.
+
+3. **Per-bot in-flight lock**  
+   Scheduler runs are skipped if a previous cycle is still executing. This prevents overlapping maker cycles from sending concurrent txs from the same key.
+
+Why this choice now:
+- Minimal complexity and no external infra.
+- Good fit for a single Railway instance and one writer key per bot.
+- Solves the exact failure mode seen in logs (`next nonce N, tx nonce N-2`).
+
+### Better approach for scaling later — Option 2
+
+When moving beyond a single writer instance, use a **distributed nonce manager** (Redis/DB-backed nonce leasing):
+
+- Reserve nonce atomically per wallet (`INCR` / row lock).
+- Send tx with explicit nonce.
+- Persist tx lifecycle (`reserved`, `sent`, `mined`, `replaced`, `failed`).
+- Add reconciliation workers to resolve dropped/replaced txs.
+
+Why this is better for scale:
+- Safe across multiple containers/processes using the same signer.
+- Survives restarts without nonce desync.
+- Supports horizontal scaling and higher sustained write throughput.
+
+---
+
 ## Important Notes
 
 - **Testnet only for USDC minting** — `MockUSDC.mint()` has no access control and works on Base Sepolia. On mainnet you must fund the wallets with real USDC instead.

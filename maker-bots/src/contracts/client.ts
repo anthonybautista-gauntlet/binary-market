@@ -60,6 +60,60 @@ export function getBuyerWallet(): NonceManager {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+const walletQueues = new WeakMap<NonceManager, Promise<void>>();
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isNonceSyncError(err: unknown): boolean {
+  if (!err || typeof err !== "object") return false;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const e = err as any;
+  const code = String(e.code ?? "");
+  const msg = String(e.message ?? "").toLowerCase();
+  return (
+    code === "NONCE_EXPIRED" ||
+    msg.includes("nonce too low") ||
+    msg.includes("nonce has already been used") ||
+    msg.includes("already known") ||
+    msg.includes("replacement transaction underpriced")
+  );
+}
+
+async function runWalletWrite<T>(
+  wallet: NonceManager,
+  action: string,
+  fn: () => Promise<T>
+): Promise<T> {
+  const previous = walletQueues.get(wallet) ?? Promise.resolve();
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  walletQueues.set(wallet, previous.catch(() => {}).then(() => gate));
+
+  await previous.catch(() => {});
+  try {
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        return await fn();
+      } catch (err) {
+        if (attempt === 1 && isNonceSyncError(err)) {
+          wallet.reset();
+          logger.warn({ err, action }, "Nonce drift detected, retrying write once");
+          await sleep(250);
+          continue;
+        }
+        throw err;
+      }
+    }
+    throw new Error(`Unreachable nonce retry path for action=${action}`);
+  } finally {
+    release();
+  }
+}
+
 function marketRead(): Contract {
   return new Contract(config.marketAddress, MeridianMarketAbi, getProvider());
 }
@@ -197,7 +251,9 @@ export async function ensureUsdcBalance(
     { address, needed: needed.toString(), amount: amount.toString() },
     "Minting USDC"
   );
-  const tx = await usdcWrite(wallet).mint(address, needed);
+  const tx = await runWalletWrite(wallet, "usdc.mint", () =>
+    usdcWrite(wallet).mint(address, needed)
+  );
   await tx.wait();
   logger.debug({ address, needed: needed.toString() }, "USDC minted");
 }
@@ -215,7 +271,9 @@ export async function ensureUsdcAllowance(
   if (allowance >= amount) return;
 
   logger.debug({ address, amount: amount.toString() }, "Approving USDC");
-  const tx = await usdcWrite(wallet).approve(config.marketAddress, MaxUint256);
+  const tx = await runWalletWrite(wallet, "usdc.approve", () =>
+    usdcWrite(wallet).approve(config.marketAddress, MaxUint256)
+  );
   await tx.wait();
   logger.debug({ address }, "USDC approved (MaxUint256)");
 }
@@ -233,7 +291,9 @@ export async function ensureErc1155Approval(wallet: NonceManager): Promise<void>
   if (approved) return;
 
   logger.debug({ address }, "Setting ERC1155 approval for market contract");
-  const tx = await marketWrite(wallet).setApprovalForAll(config.marketAddress, true);
+  const tx = await runWalletWrite(wallet, "market.setApprovalForAll", () =>
+    marketWrite(wallet).setApprovalForAll(config.marketAddress, true)
+  );
   await tx.wait();
   logger.debug({ address }, "ERC1155 approval set");
 }
@@ -252,7 +312,9 @@ export async function mintPair(
   logger.debug({ marketId, quantity: quantity.toString() }, "mintPair");
   // Explicit gasLimit skips eth_estimateGas — avoids stale-read failures on
   // public load-balanced RPC endpoints (read-your-writes inconsistency).
-  const tx = await marketWrite(wallet).mintPair(marketId, quantity, { gasLimit: 300_000n });
+  const tx = await runWalletWrite(wallet, "market.mintPair", () =>
+    marketWrite(wallet).mintPair(marketId, quantity, { gasLimit: 300_000n })
+  );
   await tx.wait();
 }
 
@@ -278,7 +340,9 @@ export async function placeOrder(
   // Explicit gasLimit skips eth_estimateGas — avoids stale-read failures on
   // public load-balanced RPC endpoints (read-your-writes inconsistency).
   // 1.5M covers resting orders (avg ~290k) and several crossing fills comfortably.
-  const tx = await contract.placeOrder(marketId, side, priceCents, quantity, isIOC, { gasLimit: 1_500_000n });
+  const tx = await runWalletWrite(wallet, "market.placeOrder", () =>
+    contract.placeOrder(marketId, side, priceCents, quantity, isIOC, { gasLimit: 1_500_000n })
+  );
   const receipt = await tx.wait();
 
   // Parse OrderPlaced event to extract the orderId
@@ -310,7 +374,9 @@ export async function bulkCancelOrders(
   logger.debug({ count: orderIds.length }, "bulkCancelOrders");
   // Max observed: 156k. Scale with order count; 500k covers ~25 orders safely.
   const gasLimit = BigInt(Math.max(200_000, orderIds.length * 20_000));
-  const tx = await marketWrite(wallet).bulkCancelOrders(orderIds, { gasLimit });
+  const tx = await runWalletWrite(wallet, "market.bulkCancelOrders", () =>
+    marketWrite(wallet).bulkCancelOrders(orderIds, { gasLimit })
+  );
   await tx.wait();
   logger.debug({ count: orderIds.length }, "Orders cancelled");
 }
@@ -334,11 +400,13 @@ export async function buyNoMarket(
     { marketId, quantity: quantity.toString(), minYesSaleProceeds: minYesSaleProceeds.toString() },
     "buyNoMarket"
   );
-  const tx = await marketWrite(wallet).buyNoMarket(
-    marketId,
-    quantity,
-    minYesSaleProceeds,
-    maxFills
+  const tx = await runWalletWrite(wallet, "market.buyNoMarket", () =>
+    marketWrite(wallet).buyNoMarket(
+      marketId,
+      quantity,
+      minYesSaleProceeds,
+      maxFills
+    )
   );
   await tx.wait();
 }

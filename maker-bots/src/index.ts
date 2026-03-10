@@ -12,7 +12,8 @@
  *               Default: every 30 minutes (BUYER_CRON).
  *
  * Both bots run immediately on startup so the book is populated right away.
- * Both are wrapped in safeRun() so one bot's error never kills the other.
+ * Each bot is wrapped in safeRun() with an in-flight lock, so one bot's error
+ * never kills the other and overlapping cycles are skipped.
  */
 
 // Load .env before anything else (no-op if not present; Railway injects env vars)
@@ -64,9 +65,17 @@ async function startup(): Promise<void> {
 // ── Safe wrapper ──────────────────────────────────────────────────────────────
 
 function safeRun(name: string, fn: () => Promise<void>): () => void {
+  let inFlight = false;
   return () => {
+    if (inFlight) {
+      logger.warn({ bot: name }, `Skipping "${name}" run because previous cycle is still in-flight`);
+      return;
+    }
+    inFlight = true;
     fn().catch((err) => {
       logger.error({ err, bot: name }, `Unhandled error in bot "${name}"`);
+    }).finally(() => {
+      inFlight = false;
     });
   };
 }
