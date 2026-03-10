@@ -66,6 +66,19 @@ export function useOrderBook(marketId: `0x${string}`) {
     }
   }, [marketId, fetchOrderBook]);
 
+  // Fallback polling: event streams can occasionally lag/drop on public RPCs.
+  // Keep this interval conservative to avoid excessive read load.
+  useEffect(() => {
+    if (!marketId) return;
+    const interval = setInterval(() => {
+      if (typeof document !== 'undefined' && document.hidden) return;
+      fetchOrderBook().catch(() => {
+        // Best-effort only.
+      });
+    }, 30_000);
+    return () => clearInterval(interval);
+  }, [marketId, fetchOrderBook]);
+
   // Watch for events
   useWatchContractEvent({
     address: MARKET_ADDRESS,

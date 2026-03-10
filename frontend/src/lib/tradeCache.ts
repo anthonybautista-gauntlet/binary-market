@@ -3,7 +3,12 @@ import { openDB, IDBPDatabase } from 'idb';
 const DB_NAME = 'meridian';
 const DB_VERSION = 2;
 
-export type TradeEventType = 'OrderFilled' | 'PairMinted' | 'Redeemed';
+export type TradeEventType =
+  | 'OrderFilled'
+  | 'PairMinted'
+  | 'Redeemed'
+  | 'OrderPlaced'
+  | 'OrderCancelled';
 
 export interface TradeEvent {
   // Composite primary key: unique across all events
@@ -24,6 +29,14 @@ export interface TradeEvent {
   side?: number; // 0=BID, 1=ASK (taker side)
   priceCents?: number;
   qty?: bigint;
+
+  // OrderPlaced fields
+  placedSide?: number; // 0=BID, 1=ASK
+  placedPriceCents?: number;
+  placedQty?: bigint;
+
+  // OrderCancelled fields
+  cancelRemainingQty?: bigint;
 
   // PairMinted fields
   mintQty?: bigint;

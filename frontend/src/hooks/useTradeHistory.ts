@@ -23,6 +23,12 @@ const DEPLOYMENT_BLOCK = BigInt(
 const ORDER_FILLED_ABI = parseAbiItem(
   'event OrderFilled(bytes32 indexed marketId, uint256 indexed orderId, address indexed maker, address taker, uint8 side, uint8 priceCents, uint128 qty)'
 );
+const ORDER_PLACED_ABI = parseAbiItem(
+  'event OrderPlaced(bytes32 indexed marketId, uint256 indexed orderId, address indexed owner, uint8 side, uint8 priceCents, uint128 quantity)'
+);
+const ORDER_CANCELLED_ABI = parseAbiItem(
+  'event OrderCancelled(uint256 indexed orderId, address indexed owner, uint128 remainingQty)'
+);
 const PAIR_MINTED_ABI = parseAbiItem(
   'event PairMinted(bytes32 indexed marketId, address indexed user, uint256 quantity)'
 );
@@ -43,12 +49,22 @@ export function useTradeHistory() {
     queryKey: ['trade-history', address, chainId],
     enabled: isConnected && !!address && typeof window !== 'undefined',
     staleTime: 30_000,
+    refetchInterval: 20_000,
+    refetchIntervalInBackground: false,
     queryFn: async (): Promise<TradeEvent[]> => {
       if (!address) return [];
 
       const wallet = address.toLowerCase();
       const publicClient = getPublicClient(config);
       if (!publicClient) return getEventsForWallet(wallet, chainId);
+
+      const existingEvents = await getEventsForWallet(wallet, chainId);
+      const orderToMarket = new Map<string, string>();
+      for (const ev of existingEvents) {
+        if (ev.orderId && ev.marketId) {
+          orderToMarket.set(ev.orderId.toLowerCase(), ev.marketId);
+        }
+      }
 
       const currentBlock = await getBlockNumber(config);
       const cachedLastBlock = await getCursor(wallet, chainId);
@@ -160,6 +176,67 @@ export function useTradeHistory() {
           marketId: toHex(marketId),
           redeemQty: BigInt(quantity ?? 0),
           payout: BigInt(payout ?? 0),
+        });
+      }
+
+      // ── OrderPlaced (wallet owner) ──
+      const placedLogs = await publicClient.getLogs({
+        address: MARKET_ADDRESS,
+        event: ORDER_PLACED_ABI,
+        args: { owner: address },
+        fromBlock,
+        toBlock: currentBlock,
+      }).catch(() => []);
+
+      for (const log of placedLogs) {
+        if (!log.args) continue;
+        const { marketId, orderId, side, priceCents, quantity } = log.args as any;
+        const orderHex = toHex(orderId).toLowerCase();
+        const marketHex = toHex(marketId);
+        orderToMarket.set(orderHex, marketHex);
+
+        newEvents.push({
+          id: `${log.transactionHash}-${log.logIndex}`,
+          wallet,
+          chainId,
+          blockNumber: Number(log.blockNumber ?? 0n),
+          txHash: log.transactionHash ?? '',
+          logIndex: log.logIndex ?? 0,
+          eventType: 'OrderPlaced',
+          marketId: marketHex,
+          orderId: orderHex,
+          placedSide: Number(side ?? 0),
+          placedPriceCents: Number(priceCents ?? 0),
+          placedQty: BigInt(quantity ?? 0),
+        });
+      }
+
+      // ── OrderCancelled (wallet owner) ──
+      const cancelledLogs = await publicClient.getLogs({
+        address: MARKET_ADDRESS,
+        event: ORDER_CANCELLED_ABI,
+        args: { owner: address },
+        fromBlock,
+        toBlock: currentBlock,
+      }).catch(() => []);
+
+      for (const log of cancelledLogs) {
+        if (!log.args) continue;
+        const { orderId, remainingQty } = log.args as any;
+        const orderHex = toHex(orderId).toLowerCase();
+        const marketHex = orderToMarket.get(orderHex) ?? '';
+
+        newEvents.push({
+          id: `${log.transactionHash}-${log.logIndex}`,
+          wallet,
+          chainId,
+          blockNumber: Number(log.blockNumber ?? 0n),
+          txHash: log.transactionHash ?? '',
+          logIndex: log.logIndex ?? 0,
+          eventType: 'OrderCancelled',
+          marketId: marketHex,
+          orderId: orderHex,
+          cancelRemainingQty: BigInt(remainingQty ?? 0),
         });
       }
 

@@ -74,7 +74,8 @@ Next.js 15 trading UI. Reads all state directly from on-chain events — no inde
 Key pages:
 - `/` — market overview across all 7 MAG7 tickers
 - `/ticker/[symbol]` — active markets for a single ticker
-- `/ticker/[symbol]/[marketId]` — individual market trading view (order book, buy/sell panel, history)
+- `/market/[id]` — individual market trading view (order book, open orders, market activity, buy/sell panel)
+- `/history` — dedicated wallet history + market activity log
 
 See [frontend/README.md](frontend/README.md) for setup and WalletConnect configuration.
 

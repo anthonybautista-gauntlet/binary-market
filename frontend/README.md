@@ -13,8 +13,9 @@ Meridian is a premium, non-custodial binary options trading platform built on **
 - **USDC Balance & Allowance**: Always visible on every trading screen.
 - **Position Constraints**: Enforced in the UI — YES holders cannot buy NO and vice versa.
 - **Portfolio & PnL**: Full trade history reconstructed from on-chain events with IndexedDB caching.
+- **Execution History**: Dedicated `/history` page with wallet history and market-wide activity.
 - **Settlement Countdown**: Live countdown timer and status badge (LIVE / SETTLING / SETTLED / EXPIRED).
-- **Open Orders Panel**: View and cancel resting limit orders directly from the trading screen.
+- **Open Orders Panel**: View and cancel resting limit orders directly from the trading screen, with live owner/remaining checks.
 - **E2E Tested**: Playwright test suite covering all critical user flows.
 
 ## Tech Stack
@@ -88,8 +89,9 @@ All ABIs are stored in `src/lib/abi/`. Contract addresses are read from environm
 | `useMockUSDC` | Handles testnet USDC minting and ERC20 approval |
 | `useUSDCData` | Batches `balanceOf` + `allowance` for the connected wallet via `useReadContracts` |
 | `useTokenBalances(marketId)` | Batches ERC1155 YES/NO `balanceOf` calls and `isApprovedForAll` status |
-| `useOrderBook(marketId)` | Fetches order book depth across all 99 price levels; live updates via `useWatchContractEvent` |
-| `useTradeHistory(marketId?)` | Fetches `OrderFilled`, `PairMinted`, and `Redeemed` events with IndexedDB caching |
+| `useOrderBook(marketId)` | Fetches order book depth across all 99 price levels; live updates via events + fallback polling |
+| `useTradeHistory()` | Fetches wallet `OrderPlaced`, `OrderCancelled`, `OrderFilled`, `PairMinted`, and `Redeemed` events with IndexedDB caching |
+| `useMarketExecutionLog(marketId)` | Fetches market-wide `OrderFilled` activity with incremental cache cursors |
 
 ### 2. Live Price Data
 
@@ -116,6 +118,11 @@ The `TradePanel` component exposes every contract entry point as a dedicated tab
 
 All tabs accept a `quantity` parameter so users can mint or trade multiple tokens in a single transaction. ERC20 approval (`approve`) and ERC1155 approval (`setApprovalForAll`) are handled automatically before the first trade.
 
+The trade panel header always shows:
+- USDC balance
+- YES token balance for the current market
+- NO token balance for the current market
+
 ### 4. Position Constraints
 
 The UI enforces the PRD rule that **YES holders cannot buy NO and vice versa**. When `useTokenBalances` detects a conflicting balance, the relevant buy tab displays a `PositionBlock` notice explaining the conflict and directing the user to sell their current position first.
@@ -128,9 +135,9 @@ Logo metadata is configured per ticker in `src/constants/assets.ts`.
 
 ### 6. Portfolio & PnL
 
-The portfolio page reconstructs full trade history from on-chain events without an indexer:
+The portfolio and history pages reconstruct wallet activity from on-chain events without an indexer:
 
-1. `useTradeHistory` queries the RPC for `OrderFilled`, `PairMinted`, and `Redeemed` events using Viem's `getLogs`.
+1. `useTradeHistory` queries the RPC for `OrderPlaced`, `OrderCancelled`, `OrderFilled`, `PairMinted`, and `Redeemed` events using Viem's `getLogs`.
 2. Events are cached in **IndexedDB** (`meridian` database, `tradeEvents` store) keyed by wallet address + chain ID. Only blocks since the last fetch are requested on subsequent visits, making incremental updates cheap.
 3. `computeMarketPnL` aggregates the event stream to produce per-market `avgEntryPriceCents`, `totalCostUsdc`, `realizedPnlUsdc`, and `fillCount`.
 4. The portfolio table shows: Balance, Exposure, Avg Entry Price, Current Value (Pyth × balance), Unrealized P&L, Realized P&L, and Fill Count.
@@ -141,12 +148,14 @@ A **"Sync History"** button allows manual re-fetch of the incremental event wind
 
 ### 7. IndexedDB Caching
 
-Trade history caching uses the `idb` package with two object stores:
+Trade and activity caching uses the `idb` package with four object stores:
 
 | Store | Key | Purpose |
 |-------|-----|---------|
-| `tradeEvents` | `[userAddress, chainId, txHash, logIndex]` | Every `OrderFilled`, `PairMinted`, and `Redeemed` event |
+| `tradeEvents` | `[userAddress, chainId, txHash, logIndex]` | Wallet history events: `OrderPlaced`, `OrderCancelled`, `OrderFilled`, `PairMinted`, `Redeemed` |
 | `cursors` | `[userAddress, chainId]` | Last block number fetched per wallet/chain combination |
+| `marketExecutionEvents` | `[chainId, marketId, txHash, logIndex]` | Market-wide `OrderFilled` activity events |
+| `marketExecutionCursors` | `[chainId, marketId]` | Last block number fetched per market/chain combination |
 
 This design means the first load fetches all historical events (can be slow on mainnet with many transactions), but every subsequent load fetches only new events from `lastBlock + 1` to the current head.
 
@@ -165,13 +174,19 @@ The same logic is exported as `MarketStatusBadge` for use in the market listing 
 
 ### 9. Open Orders Panel
 
-`OpenOrders` queries `OrderPlaced` and `OrderCancelled` event logs for the connected wallet, reconstructs the set of live resting orders, and renders them with a **Cancel** button per order. Cancellation calls `cancelOrder(orderId)` on the contract.
+`OpenOrders` uses event reconstruction plus on-chain verification:
+
+1. Fetches wallet `OrderPlaced` and `OrderCancelled` logs for the current market.
+2. Verifies each candidate order is still live using `orderOwner(orderId)`.
+3. Computes remaining quantity by subtracting `OrderFilled` quantities for that order.
+4. Renders only currently live orders with accurate remaining size, with a **Cancel** button calling `cancelOrder(orderId)`.
 
 ### 10. On-Chain Order Book
 
 The order book uses a hybrid approach:
 - **Initial load**: Reads `depthAt` for all 99 price levels (1–99 cents) in a single batched `readContracts` call.
-- **Live updates**: `useWatchContractEvent` listens for `OrderPlaced` and `OrderCancelled` events and applies targeted Zustand store updates to the affected price level without re-fetching the whole book.
+- **Event-driven updates**: `useWatchContractEvent` listens for `OrderPlaced`, `OrderFilled`, and `OrderCancelled`.
+- **Fallback polling**: conservative interval polling is enabled (visible tab only) to recover from missed/delayed event subscriptions on public RPC endpoints.
 
 ---
 
@@ -183,8 +198,9 @@ src/
 │   ├── layout.tsx              Root layout with Providers
 │   ├── page.tsx                Landing page — MAG7 asset grid + prices
 │   ├── markets/page.tsx        Market listing grid with status badges
-│   ├── market/[id]/page.tsx    Market detail: TradingView chart, TradePanel, OpenOrders
-│   ├── portfolio/page.tsx      Portfolio: holdings, PnL, trade history
+│   ├── market/[id]/page.tsx    Market detail: TradingView chart, TradePanel, OpenOrders, MarketActivity
+│   ├── portfolio/page.tsx      Portfolio: holdings, PnL, wallet history
+│   ├── history/page.tsx        Dedicated history route (wallet + market activity)
 │   └── ticker/[ticker]/        TradingView chart embed per ticker
 │
 ├── components/
@@ -192,6 +208,7 @@ src/
 │   ├── TradePanel.tsx          6-tab order entry form (all order types)
 │   ├── OrderBook.tsx           CLOB depth display with live updates
 │   ├── OpenOrders.tsx          User's resting limit orders with cancel
+│   ├── MarketActivity.tsx      Market-wide fill log with All/My filter
 │   ├── SettlementCountdown.tsx Countdown timer + MarketStatusBadge
 │   ├── TickerLogo.tsx          Local logo image with first-letter fallback
 │   ├── RedeemButton.tsx        Post-settlement redemption button
@@ -203,11 +220,12 @@ src/
 │   ├── usePythPrices.ts        Hermes polling hook (2s interval)
 │   ├── useUSDCData.ts          USDC balance + allowance for connected wallet
 │   ├── useTokenBalances.ts     ERC1155 YES/NO balances + isApprovedForAll
-│   └── useTradeHistory.ts      Event log fetching + IndexedDB cache + PnL computation
+│   ├── useTradeHistory.ts      Wallet history fetching + IndexedDB cache + PnL computation
+│   └── useMarketExecutionLog.ts Market-wide fill log hook (incremental cache)
 │
 ├── lib/
 │   ├── abi/                    MeridianMarket.json, MockUSDC.json
-│   ├── tradeCache.ts           IndexedDB schema and CRUD helpers (idb)
+│   ├── tradeCache.ts           IndexedDB schemas/cursors for wallet history + market activity
 │   ├── wagmi.ts                Wagmi config (RainbowKit getDefaultConfig)
 │   └── utils.ts                Tailwind class merging (cn)
 │

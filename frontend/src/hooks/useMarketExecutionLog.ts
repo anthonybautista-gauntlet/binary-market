@@ -40,6 +40,8 @@ export function useMarketExecutionLog(
     queryKey: ['market-execution-log', chainId, marketId, mode, address],
     enabled: !!marketId && typeof window !== 'undefined',
     staleTime: 15_000,
+    refetchInterval: 15_000,
+    refetchIntervalInBackground: false,
     queryFn: async (): Promise<MarketExecutionEvent[]> => {
       if (!marketId) return [];
 

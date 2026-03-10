@@ -21,6 +21,8 @@ function txExplorerUrl(chainId: number, txHash: string): string {
 
 function toDisplayAction(eventType: string, side?: number): string {
   if (eventType === 'OrderFilled') return side === 0 ? 'Buy YES Fill' : 'Sell YES Fill';
+  if (eventType === 'OrderPlaced') return 'Order Placed';
+  if (eventType === 'OrderCancelled') return 'Order Cancelled';
   if (eventType === 'PairMinted') return 'Mint Pair';
   if (eventType === 'Redeemed') return 'Redeem';
   return eventType;
@@ -30,6 +32,13 @@ function toDisplayAction(eventType: string, side?: number): string {
 function toDetails(event: any): string {
   if (event.eventType === 'OrderFilled') {
     return `${event.priceCents ?? 0}¢ x${event.qty?.toString?.() ?? '0'}`;
+  }
+  if (event.eventType === 'OrderPlaced') {
+    const side = event.placedSide === 0 ? 'BID' : 'ASK';
+    return `${side} ${event.placedPriceCents ?? 0}¢ x${event.placedQty?.toString?.() ?? '0'}`;
+  }
+  if (event.eventType === 'OrderCancelled') {
+    return `Order #${String(event.orderId ?? '').slice(0, 10)}… • Remaining ${event.cancelRemainingQty?.toString?.() ?? '0'}`;
   }
   if (event.eventType === 'PairMinted') {
     return `Qty ${event.mintQty?.toString?.() ?? '0'}`;
@@ -169,12 +178,16 @@ export function HistoryPageClient({
                               {toDisplayAction(event.eventType, event.side)}
                             </td>
                             <td className="px-5 py-3">
-                              <Link
-                                href={`/market/${event.marketId}`}
-                                className="text-xs font-mono text-blue-400 hover:text-blue-300"
-                              >
-                                {event.marketId.slice(0, 10)}...
-                              </Link>
+                              {event.marketId ? (
+                                <Link
+                                  href={`/market/${event.marketId}`}
+                                  className="text-xs font-mono text-blue-400 hover:text-blue-300"
+                                >
+                                  {event.marketId.slice(0, 10)}...
+                                </Link>
+                              ) : (
+                                <span className="text-xs font-mono text-slate-600">N/A</span>
+                              )}
                             </td>
                             <td className="px-5 py-3 text-xs text-slate-400">
                               {toDetails(event)}

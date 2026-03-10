@@ -260,12 +260,24 @@ export function TradePanel({ marketId, ticker, strikePrice }: TradePanelProps) {
     <div className="bg-[#0b0e11] border border-slate-800 rounded-3xl p-6 h-fit sticky top-24 backdrop-blur-xl shadow-2xl shadow-blue-500/5">
       {/* USDC Balance Header */}
       {address && (
-        <div className="flex items-center justify-between mb-5 px-1 py-2 bg-slate-900/50 rounded-xl border border-slate-800/50">
-          <div className="flex items-center gap-2">
-            <div className="w-2 h-2 rounded-full bg-green-500 shadow-[0_0_6px_rgba(34,197,94,0.5)]" />
-            <span className="text-[10px] uppercase font-black text-slate-500 tracking-widest">USDC Balance</span>
+        <div className="mb-5 px-3 py-2.5 bg-slate-900/50 rounded-xl border border-slate-800/50 space-y-2">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <div className="w-2 h-2 rounded-full bg-green-500 shadow-[0_0_6px_rgba(34,197,94,0.5)]" />
+              <span className="text-[10px] uppercase font-black text-slate-500 tracking-widest">USDC Balance</span>
+            </div>
+            <span className="text-white font-mono font-bold text-sm">${formattedBalance}</span>
           </div>
-          <span className="text-white font-mono font-bold text-sm">${formattedBalance}</span>
+          <div className="grid grid-cols-2 gap-2">
+            <div className="rounded-lg border border-blue-500/20 bg-blue-500/8 px-2 py-1.5">
+              <p className="text-[9px] text-blue-400 font-black uppercase tracking-widest">YES Held</p>
+              <p className="text-sm font-mono font-bold text-white">{yesBalance.toString()}</p>
+            </div>
+            <div className="rounded-lg border border-red-500/20 bg-red-500/8 px-2 py-1.5">
+              <p className="text-[9px] text-red-400 font-black uppercase tracking-widest">NO Held</p>
+              <p className="text-sm font-mono font-bold text-white">{noBalance.toString()}</p>
+            </div>
+          </div>
         </div>
       )}
 

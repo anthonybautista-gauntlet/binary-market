@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useAccount, useWriteContract, useConfig, useWatchContractEvent } from 'wagmi';
-import { getPublicClient } from '@wagmi/core';
+import { getPublicClient, readContract } from '@wagmi/core';
 import { parseAbiItem } from 'viem';
 import MeridianMarketABI from '@/lib/abi/MeridianMarket.json';
 import { Button } from '@/components/ui/button';
@@ -26,7 +26,7 @@ interface OpenOrder {
   orderId: bigint;
   side: number;
   priceCents: number;
-  quantity: bigint;
+  quantity: bigint; // remaining quantity
 }
 
 export function OpenOrders({ marketId }: { marketId: `0x${string}` }) {
@@ -64,18 +64,49 @@ export function OpenOrders({ marketId }: { marketId: `0x${string}` }) {
 
         const cancelledIds = new Set(cancelled.map((l) => String(((l as any).args as any)?.orderId)));
 
-        const open: OpenOrder[] = [];
-        for (const log of placed) {
-          const { orderId, side, priceCents, quantity } = log.args as any;
-          if (cancelledIds.has(String(orderId))) continue;
-          // Check if still live (orderOwner would return address(0) if filled/cancelled)
-          open.push({
-            orderId: BigInt(orderId),
-            side: Number(side),
-            priceCents: Number(priceCents),
-            quantity: BigInt(quantity),
-          });
-        }
+        const expectedOwner = address.toLowerCase();
+        const open = (
+          await Promise.all(
+            placed.map(async (log) => {
+              const { orderId, side, priceCents, quantity } = log.args as any;
+              if (cancelledIds.has(String(orderId))) return null;
+
+              const oid = BigInt(orderId);
+
+              // Verify order is still live on-chain.
+              const currentOwner = await readContract(config, {
+                address: MARKET_ADDRESS,
+                abi: MeridianMarketABI.abi as any,
+                functionName: 'orderOwner',
+                args: [oid],
+              }).catch(() => '0x0000000000000000000000000000000000000000');
+              if (String(currentOwner).toLowerCase() !== expectedOwner) return null;
+
+              // Derive remaining qty by subtracting fills for this order.
+              const fills = await publicClient.getLogs({
+                address: MARKET_ADDRESS,
+                event: ORDER_FILLED_ABI,
+                args: { orderId: oid },
+                fromBlock: DEPLOYMENT_BLOCK,
+              }).catch(() => []);
+              const filledQty = fills.reduce(
+                (sum, fillLog) => sum + BigInt((fillLog.args as any)?.qty ?? 0),
+                0n
+              );
+              const placedQty = BigInt(quantity);
+              const remainingQty = placedQty > filledQty ? placedQty - filledQty : 0n;
+              if (remainingQty === 0n) return null;
+
+              return {
+                orderId: oid,
+                side: Number(side),
+                priceCents: Number(priceCents),
+                quantity: remainingQty,
+              } satisfies OpenOrder;
+            })
+          )
+        ).filter(Boolean) as OpenOrder[];
+
         setOrders(open);
       } finally {
         setIsLoading(false);
@@ -84,6 +115,16 @@ export function OpenOrders({ marketId }: { marketId: `0x${string}` }) {
 
     load();
   }, [address, isConnected, marketId, config, refreshTick]);
+
+  // Fallback polling for environments where event subscriptions are delayed.
+  useEffect(() => {
+    if (!address || !isConnected || !marketId) return;
+    const interval = setInterval(() => {
+      if (typeof document !== 'undefined' && document.hidden) return;
+      setRefreshTick((v) => v + 1);
+    }, 30_000);
+    return () => clearInterval(interval);
+  }, [address, isConnected, marketId]);
 
   useWatchContractEvent({
     address: MARKET_ADDRESS,
