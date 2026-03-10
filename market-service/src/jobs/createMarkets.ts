@@ -17,9 +17,8 @@ import {
   isTradingDay,
   isEarlyClose,
   getMarketCloseTime,
-  getPrevTradingDay,
 } from "../services/calendarService.js";
-import { fetchPricesAtTime } from "../services/hermesClient.js";
+import { fetchLatestPrices } from "../services/hermesClient.js";
 import { fetchYahooClosingPrices, dollarsToPythUnits } from "../services/yahooFinance.js";
 import { computeStrikes, pythUnitsToDollars } from "../services/strikeCalc.js";
 import {
@@ -54,24 +53,20 @@ export async function runCreateMarkets(): Promise<void> {
     "Market expiry set"
   );
 
-  // ── 3. Fetch previous trading day's closing price from Hermes ─────────────
-  const prevDay = getPrevTradingDay(now);
-  const prevClose = getMarketCloseTime(prevDay);
-  // Request a price at the exact prior close timestamp
-  const prevCloseUnix = Math.floor(prevClose.getTime() / 1000);
-
+  // ── 3. Fetch current live prices from Hermes ─────────────────────────────
+  // We use the latest live price (not yesterday's close) because:
+  //   a) fetchLatestPrices is reliable — it's the same endpoint the pricePusher uses
+  //   b) A current price centers today's strike bins on today's actual market price
+  //   c) The historical endpoint is unreliable for equity feeds near close time
   const allFeedIds = Object.values(config.feeds);
-  log.info(
-    { prevCloseUnix, prevCloseISO: prevClose.toISOString() },
-    "Fetching previous-day closing prices from Hermes"
-  );
+  log.info("Fetching current prices from Hermes for strike computation");
 
   // ── 3a. Try Hermes; fall back to Yahoo Finance on failure ─────────────────
   const refPriceByTicker = new Map<string, bigint>();
 
   let hermesOk = false;
   try {
-    const hermesPrices = await fetchPricesAtTime(allFeedIds, prevCloseUnix);
+    const hermesPrices = await fetchLatestPrices(allFeedIds);
     if (hermesPrices.parsed.length === 0) {
       throw new Error("Hermes returned no parsed prices");
     }
@@ -84,7 +79,7 @@ export async function runCreateMarkets(): Promise<void> {
       if (p) refPriceByTicker.set(ticker, p.price);
     }
     hermesOk = true;
-    log.info({ tickers: [...refPriceByTicker.keys()] }, "Hermes prices loaded");
+    log.info({ tickers: [...refPriceByTicker.keys()] }, "Hermes live prices loaded");
   } catch (err) {
     log.warn({ err }, "Hermes fetch failed — falling back to Yahoo Finance for strike prices");
   }

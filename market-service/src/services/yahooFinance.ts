@@ -14,6 +14,18 @@ import yahooFinance from "yahoo-finance2";
 import { logger } from "../logger.js";
 import { config } from "../config.js";
 
+// Mimic a browser User-Agent so cloud datacenter IPs are not blocked by Yahoo.
+// Railway (and most cloud providers) get their IP ranges rejected by Yahoo's
+// servers unless the request looks like it came from a real browser.
+yahooFinance.setOptions({
+  fetchOptions: {
+    headers: {
+      "User-Agent":
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+    },
+  },
+});
+
 export type TickerPrices = Record<string, number>;
 
 /**
@@ -38,7 +50,8 @@ export async function fetchYahooClosingPrices(): Promise<TickerPrices> {
         prices[ticker] = price;
         logger.debug({ ticker, price }, "Yahoo Finance price fetched");
       } catch (err) {
-        logger.warn({ ticker, err }, "Yahoo Finance fetch failed for ticker");
+        const message = err instanceof Error ? err.message : String(err);
+        logger.warn({ ticker, error: message }, "Yahoo Finance fetch failed for ticker");
       }
     })
   );
