@@ -16,11 +16,9 @@ contracts/.env
 
 # Node / npm workspace
 node_modules/
-package-lock.json
 
 # Frontend
 frontend/node_modules/
-frontend/package-lock.json
 frontend/.next/
 frontend/dist/
 frontend/build/
