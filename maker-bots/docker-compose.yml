@@ -1,0 +1,12 @@
+services:
+  maker-bots:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    environment:
+      - NODE_ENV=production
+      - LOG_LEVEL=info
+    restart: unless-stopped
+    # No ports needed — pure background worker
