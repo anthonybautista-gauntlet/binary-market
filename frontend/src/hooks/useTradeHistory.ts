@@ -14,6 +14,8 @@ import {
 
 const MARKET_ADDRESS = process.env.NEXT_PUBLIC_MERIDIAN_MARKET_ADDRESS as `0x${string}`;
 const HISTORY_BACKFILL_BLOCKS = 120n;
+const LOG_CHUNK_BLOCKS = 2_000n;
+const MIN_LOG_CHUNK_BLOCKS = 100n;
 
 // Block at which the contract was deployed — used as the starting point on first load.
 // Update this to the actual deployment block to avoid scanning from genesis.
@@ -50,6 +52,47 @@ function computeFromBlock(cachedLastBlock: number | null): bigint {
   return rewinded > DEPLOYMENT_BLOCK ? rewinded : DEPLOYMENT_BLOCK;
 }
 
+async function getLogsChunked(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  publicClient: any,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  baseParams: any,
+  fromBlock: bigint,
+  toBlock: bigint
+) {
+  if (fromBlock > toBlock) return [];
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const allLogs: any[] = [];
+  let cursor = fromBlock;
+  let chunkSize = LOG_CHUNK_BLOCKS;
+
+  while (cursor <= toBlock) {
+    const end =
+      cursor + chunkSize - 1n <= toBlock
+        ? cursor + chunkSize - 1n
+        : toBlock;
+
+    try {
+      // eslint-disable-next-line no-await-in-loop
+      const logs = await publicClient.getLogs({
+        ...baseParams,
+        fromBlock: cursor,
+        toBlock: end,
+      });
+      allLogs.push(...logs);
+      cursor = end + 1n;
+      if (chunkSize < LOG_CHUNK_BLOCKS) {
+        chunkSize = chunkSize * 2n <= LOG_CHUNK_BLOCKS ? chunkSize * 2n : LOG_CHUNK_BLOCKS;
+      }
+    } catch (err) {
+      if (chunkSize <= MIN_LOG_CHUNK_BLOCKS) throw err;
+      chunkSize = chunkSize / 2n;
+    }
+  }
+
+  return allLogs;
+}
+
 export function useTradeHistory() {
   const { address, isConnected } = useAccount();
   const config = useConfig();
@@ -80,19 +123,25 @@ export function useTradeHistory() {
 
       // ── OrderFilled (maker OR taker is the wallet) ──
       const [filledAsMaker, filledAsTaker] = await Promise.all([
-        publicClient.getLogs({
+        getLogsChunked(
+          publicClient,
+          {
           address: MARKET_ADDRESS,
           event: ORDER_FILLED_ABI,
           args: { maker: address },
+          },
           fromBlock,
-          toBlock: currentBlock,
-        }),
-        publicClient.getLogs({
+          currentBlock
+        ),
+        getLogsChunked(
+          publicClient,
+          {
           address: MARKET_ADDRESS,
           event: ORDER_FILLED_ABI,
+          },
           fromBlock,
-          toBlock: currentBlock,
-        }),
+          currentBlock
+        ),
       ]);
 
       const seenFillIds = new Set<string>();
@@ -129,13 +178,16 @@ export function useTradeHistory() {
       }
 
       // ── PairMinted ──
-      const mintedLogs = await publicClient.getLogs({
-        address: MARKET_ADDRESS,
-        event: PAIR_MINTED_ABI,
-        args: { user: address },
+      const mintedLogs = await getLogsChunked(
+        publicClient,
+        {
+          address: MARKET_ADDRESS,
+          event: PAIR_MINTED_ABI,
+          args: { user: address },
+        },
         fromBlock,
-        toBlock: currentBlock,
-      });
+        currentBlock
+      );
 
       for (const log of mintedLogs) {
         if (!log.args) continue;
@@ -154,13 +206,16 @@ export function useTradeHistory() {
       }
 
       // ── Redeemed ──
-      const redeemedLogs = await publicClient.getLogs({
-        address: MARKET_ADDRESS,
-        event: REDEEMED_ABI,
-        args: { user: address },
+      const redeemedLogs = await getLogsChunked(
+        publicClient,
+        {
+          address: MARKET_ADDRESS,
+          event: REDEEMED_ABI,
+          args: { user: address },
+        },
         fromBlock,
-        toBlock: currentBlock,
-      });
+        currentBlock
+      );
 
       for (const log of redeemedLogs) {
         if (!log.args) continue;
@@ -180,13 +235,16 @@ export function useTradeHistory() {
       }
 
       // ── OrderPlaced (wallet owner) ──
-      const placedLogs = await publicClient.getLogs({
-        address: MARKET_ADDRESS,
-        event: ORDER_PLACED_ABI,
-        args: { owner: address },
+      const placedLogs = await getLogsChunked(
+        publicClient,
+        {
+          address: MARKET_ADDRESS,
+          event: ORDER_PLACED_ABI,
+          args: { owner: address },
+        },
         fromBlock,
-        toBlock: currentBlock,
-      });
+        currentBlock
+      );
 
       for (const log of placedLogs) {
         if (!log.args) continue;
@@ -211,13 +269,16 @@ export function useTradeHistory() {
       }
 
       // ── OrderCancelled (wallet owner) ──
-      const cancelledLogs = await publicClient.getLogs({
-        address: MARKET_ADDRESS,
-        event: ORDER_CANCELLED_ABI,
-        args: { owner: address },
+      const cancelledLogs = await getLogsChunked(
+        publicClient,
+        {
+          address: MARKET_ADDRESS,
+          event: ORDER_CANCELLED_ABI,
+          args: { owner: address },
+        },
         fromBlock,
-        toBlock: currentBlock,
-      });
+        currentBlock
+      );
 
       for (const log of cancelledLogs) {
         if (!log.args) continue;

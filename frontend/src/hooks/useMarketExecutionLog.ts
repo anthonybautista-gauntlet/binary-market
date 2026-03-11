@@ -15,6 +15,8 @@ import {
 const MARKET_ADDRESS = process.env.NEXT_PUBLIC_MERIDIAN_MARKET_ADDRESS as `0x${string}`;
 const DEPLOYMENT_BLOCK = BigInt(process.env.NEXT_PUBLIC_DEPLOYMENT_BLOCK ?? '0');
 const MARKET_ACTIVITY_BACKFILL_BLOCKS = 120n;
+const LOG_CHUNK_BLOCKS = 2_000n;
+const MIN_LOG_CHUNK_BLOCKS = 100n;
 
 const ORDER_FILLED_ABI = parseAbiItem(
   'event OrderFilled(bytes32 indexed marketId, uint256 indexed orderId, address indexed maker, address taker, uint8 side, uint8 priceCents, uint128 qty)'
@@ -36,6 +38,46 @@ function computeFromBlock(lastCursor: number | null): bigint {
     ? cursor - MARKET_ACTIVITY_BACKFILL_BLOCKS + 1n
     : 0n;
   return rewinded > DEPLOYMENT_BLOCK ? rewinded : DEPLOYMENT_BLOCK;
+}
+
+async function getLogsChunked(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  publicClient: any,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  baseParams: any,
+  fromBlock: bigint,
+  toBlock: bigint
+) {
+  if (fromBlock > toBlock) return [];
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const allLogs: any[] = [];
+  let cursor = fromBlock;
+  let chunkSize = LOG_CHUNK_BLOCKS;
+
+  while (cursor <= toBlock) {
+    const end =
+      cursor + chunkSize - 1n <= toBlock
+        ? cursor + chunkSize - 1n
+        : toBlock;
+    try {
+      // eslint-disable-next-line no-await-in-loop
+      const logs = await publicClient.getLogs({
+        ...baseParams,
+        fromBlock: cursor,
+        toBlock: end,
+      });
+      allLogs.push(...logs);
+      cursor = end + 1n;
+      if (chunkSize < LOG_CHUNK_BLOCKS) {
+        chunkSize = chunkSize * 2n <= LOG_CHUNK_BLOCKS ? chunkSize * 2n : LOG_CHUNK_BLOCKS;
+      }
+    } catch (err) {
+      if (chunkSize <= MIN_LOG_CHUNK_BLOCKS) throw err;
+      chunkSize = chunkSize / 2n;
+    }
+  }
+
+  return allLogs;
 }
 
 export function useMarketExecutionLog(
@@ -73,13 +115,16 @@ export function useMarketExecutionLog(
       const fromBlock = computeFromBlock(lastCursor);
 
       if (fromBlock <= currentBlock) {
-        const logs = await publicClient.getLogs({
-          address: MARKET_ADDRESS,
-          event: ORDER_FILLED_ABI,
-          args: { marketId },
+        const logs = await getLogsChunked(
+          publicClient,
+          {
+            address: MARKET_ADDRESS,
+            event: ORDER_FILLED_ABI,
+            args: { marketId },
+          },
           fromBlock,
-          toBlock: currentBlock,
-        });
+          currentBlock
+        );
 
         if (logs.length > 0) {
           const uniqueBlockNumbers = Array.from(
