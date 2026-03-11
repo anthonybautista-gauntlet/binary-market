@@ -14,7 +14,7 @@ Chain ID: `84532` (Base Sepolia)
 
 ## ABI Files
 
-All ABIs are committed to the repository and must be imported directly — do not re-generate them.
+All ABIs are committed to the repository and imported directly at runtime. Re-generate and re-copy them only when the contracts are redeployed.
 
 | Contract | ABI Path |
 |---|---|
@@ -396,7 +396,7 @@ Filter out zero-quantity levels when displaying. A price level with qty=0 has no
 
 ### Tracking orders via events
 
-Listen for `OrderPlaced` and `OrderCancelled` events to maintain a local order book state. There is no fill event emitted, so `depthAt` calls are the canonical source of truth.
+Listen for `OrderPlaced`, `OrderFilled`, and `OrderCancelled` events to maintain a local order book state. `depthAt` remains the canonical source of truth and should be used to reconcile after event bursts.
 
 ```javascript
 // OrderPlaced
@@ -405,8 +405,8 @@ market.on("OrderPlaced", (marketId, orderId, owner, side, priceCents, quantity) 
 });
 
 // OrderCancelled
-market.on("OrderCancelled", (orderId, owner, remainingQty) => {
-  // orderId maps back to market via orderMarket(orderId) if needed
+market.on("OrderCancelled", (marketId, orderId, owner, remainingQty) => {
+  // marketId is emitted directly for deterministic per-market reconciliation
 });
 ```
 
@@ -513,7 +513,7 @@ function bulkCancelOrders(uint256[] calldata orderIds) external
 // Single cancel
 const tx = await market.connect(signer).cancelOrder(orderId);
 await tx.wait();
-// Emits: OrderCancelled(orderId, owner, remainingQty)
+// Emits: OrderCancelled(marketId, orderId, owner, remainingQty)
 // Collateral is automatically returned:
 //   BID: locked USDC refunded
 //   ASK: locked Yes tokens returned
@@ -691,7 +691,7 @@ All events emitted by MeridianMarket (subscribe with `contract.on(eventName, han
 | `MarketCreated` | `marketId, ticker, strikePrice, expiryTimestamp, pythFeedId` | `marketId` and `ticker` are indexed |
 | `PairMinted` | `marketId, user, quantity` | `marketId` and `user` indexed |
 | `OrderPlaced` | `marketId, orderId, owner, side, priceCents, quantity` | All three are indexed |
-| `OrderCancelled` | `orderId, owner, remainingQty` | `orderId` and `owner` indexed |
+| `OrderCancelled` | `marketId, orderId, owner, remainingQty` | `marketId`, `orderId`, and `owner` indexed |
 | `MarketSettled` | `marketId, yesWins, settlePrice, publishTime` | `marketId` indexed |
 | `AdminSettled` | `marketId, yesWins, manualPrice` | `marketId` indexed |
 | `Redeemed` | `marketId, user, quantity, payout` | `marketId` and `user` indexed |
@@ -757,6 +757,6 @@ These revert with custom errors. Decode them from transaction receipts to show u
 5. For selected market order book:
    a. Call bestBid(marketId) and bestAsk(marketId)
    b. Call depthAt for all 99 levels (batch via Promise.all or multicall)
-6. Subscribe to OrderPlaced and OrderCancelled events for live order book updates
+6. Subscribe to OrderPlaced, OrderFilled, and OrderCancelled events for live order book updates
 7. Subscribe to MarketSettled to update market status without polling
 ```

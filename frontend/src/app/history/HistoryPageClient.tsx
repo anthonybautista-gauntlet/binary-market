@@ -7,6 +7,7 @@ import { Loader2, ExternalLink } from 'lucide-react';
 import { Navbar } from '@/components/Navbar';
 import { MarketActivity } from '@/components/MarketActivity';
 import { useTradeHistory } from '@/hooks/useTradeHistory';
+import { clearCacheForWallet } from '@/lib/tradeCache';
 import { useMeridianMarket } from '@/hooks/useContracts';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -59,7 +60,7 @@ export function HistoryPageClient({
   initialTabParam,
   initialMarketId = '',
 }: HistoryPageClientProps) {
-  const { isConnected } = useAccount();
+  const { address, isConnected } = useAccount();
   const config = useConfig();
   const chainId = config.state.chainId;
 
@@ -68,6 +69,7 @@ export function HistoryPageClient({
 
   const [activeTab, setActiveTab] = useState<HistoryTab>(initialTab);
   const [selectedMarketId, setSelectedMarketId] = useState(initialMarketId);
+  const [isResyncingHistory, setIsResyncingHistory] = useState(false);
 
   const { data: tradeEvents = [], isLoading: isLoadingHistory, refetch } = useTradeHistory();
   const { markets, isLoadingMarkets } = useMeridianMarket();
@@ -99,6 +101,17 @@ export function HistoryPageClient({
       }),
     [tradeEvents]
   );
+
+  const handleResyncHistory = async () => {
+    if (!address) return;
+    setIsResyncingHistory(true);
+    try {
+      await clearCacheForWallet(address.toLowerCase(), chainId);
+      await refetch();
+    } finally {
+      setIsResyncingHistory(false);
+    }
+  };
 
   return (
     <div className="flex flex-col min-h-screen bg-[#0b0e11]">
@@ -136,7 +149,8 @@ export function HistoryPageClient({
                   </CardTitle>
                   <button
                     onClick={() => refetch()}
-                    className="text-[10px] uppercase tracking-widest font-black text-slate-500 hover:text-white"
+                    disabled={isResyncingHistory}
+                    className="text-[10px] uppercase tracking-widest font-black text-slate-500 hover:text-white disabled:opacity-50"
                   >
                     Refresh
                   </button>
@@ -208,6 +222,26 @@ export function HistoryPageClient({
                     </table>
                   </div>
                 )}
+                <div className="px-5 py-3 border-t border-slate-800/40">
+                  <details className="group">
+                    <summary className="cursor-pointer list-none text-[10px] uppercase tracking-widest font-black text-slate-600 hover:text-slate-400">
+                      Troubleshoot history sync
+                    </summary>
+                    <div className="mt-2 flex items-center justify-between gap-3 rounded-lg border border-slate-800/60 bg-slate-900/20 px-3 py-2">
+                      <p className="text-[11px] text-slate-500">
+                        Use only if events look missing. This clears local cache and rebuilds from chain logs.
+                      </p>
+                      <button
+                        onClick={handleResyncHistory}
+                        disabled={!isConnected || isResyncingHistory}
+                        className="inline-flex shrink-0 items-center gap-1 rounded-md border border-amber-500/30 px-2 py-1 text-[10px] uppercase tracking-widest font-black text-amber-400 hover:text-amber-300 disabled:opacity-50"
+                      >
+                        {isResyncingHistory && <Loader2 className="w-3 h-3 animate-spin" />}
+                        Rebuild Local History Cache
+                      </button>
+                    </div>
+                  </details>
+                </div>
               </CardContent>
             </Card>
           </TabsContent>

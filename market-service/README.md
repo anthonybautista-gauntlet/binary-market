@@ -393,7 +393,7 @@ If the `MeridianMarket` contract is redeployed, regenerate the ABIs:
 ```bash
 cd contracts
 forge build
-cp out/MeridianMarket.sol/MeridianMarket.json ../market-service/src/abi/MeridianMarket.json
+node -e "const fs=require('fs');const a=JSON.parse(fs.readFileSync('out/MeridianMarket.sol/MeridianMarket.json','utf8'));fs.writeFileSync('../market-service/src/abi/MeridianMarket.json', JSON.stringify(a.abi,null,2)+'\n');"
 cp out/MockPyth.sol/MockPyth.json ../market-service/src/abi/MockPyth.json
 # Note: MockPyth.json is used for its ABI only; the real Pyth on Base Sepolia/mainnet
 # implements the same updatePriceFeeds and getUpdateFee function signatures.
@@ -404,6 +404,8 @@ Then rebuild the service:
 cd ../market-service
 npm run build
 ```
+
+After redeploy, update `MARKET_ADDRESS` in `market-service/.env` and restart the service before starting maker-bots/frontends against the new contract.
 
 ---
 

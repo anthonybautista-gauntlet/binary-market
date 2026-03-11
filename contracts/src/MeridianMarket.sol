@@ -124,7 +124,7 @@ contract MeridianMarket is ERC1155, AccessControl, Pausable, ReentrancyGuard {
         uint8 priceCents,
         uint128 quantity
     );
-    event OrderCancelled(uint256 indexed orderId, address indexed owner, uint128 remainingQty);
+    event OrderCancelled(bytes32 indexed marketId, uint256 indexed orderId, address indexed owner, uint128 remainingQty);
     event OrderFilled(
         bytes32 indexed marketId,
         uint256 indexed orderId,
@@ -324,7 +324,7 @@ contract MeridianMarket is ERC1155, AccessControl, Pausable, ReentrancyGuard {
         _refundCollateral(mid, m, side, remaining, price, owner);
 
         _cleanOrderMeta(orderId);
-        emit OrderCancelled(orderId, owner, remaining);
+        emit OrderCancelled(mid, orderId, owner, remaining);
     }
 
     // ── Atomic Buy No (market) ─────────────────────────────────────────────────

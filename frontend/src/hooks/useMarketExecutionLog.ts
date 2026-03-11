@@ -14,6 +14,7 @@ import {
 
 const MARKET_ADDRESS = process.env.NEXT_PUBLIC_MERIDIAN_MARKET_ADDRESS as `0x${string}`;
 const DEPLOYMENT_BLOCK = BigInt(process.env.NEXT_PUBLIC_DEPLOYMENT_BLOCK ?? '0');
+const MARKET_ACTIVITY_BACKFILL_BLOCKS = 120n;
 
 const ORDER_FILLED_ABI = parseAbiItem(
   'event OrderFilled(bytes32 indexed marketId, uint256 indexed orderId, address indexed maker, address taker, uint8 side, uint8 priceCents, uint128 qty)'
@@ -26,6 +27,15 @@ function sortEvents(events: MarketExecutionEvent[]): MarketExecutionEvent[] {
     if (a.blockNumber !== b.blockNumber) return b.blockNumber - a.blockNumber;
     return b.logIndex - a.logIndex;
   });
+}
+
+function computeFromBlock(lastCursor: number | null): bigint {
+  if (lastCursor == null) return DEPLOYMENT_BLOCK;
+  const cursor = BigInt(lastCursor);
+  const rewinded = cursor >= MARKET_ACTIVITY_BACKFILL_BLOCKS
+    ? cursor - MARKET_ACTIVITY_BACKFILL_BLOCKS + 1n
+    : 0n;
+  return rewinded > DEPLOYMENT_BLOCK ? rewinded : DEPLOYMENT_BLOCK;
 }
 
 export function useMarketExecutionLog(
@@ -60,18 +70,16 @@ export function useMarketExecutionLog(
 
       const currentBlock = await getBlockNumber(config);
       const lastCursor = await getMarketExecutionCursor(chainId, normalizedMarketId);
-      const fromBlock = lastCursor != null ? BigInt(lastCursor + 1) : DEPLOYMENT_BLOCK;
+      const fromBlock = computeFromBlock(lastCursor);
 
       if (fromBlock <= currentBlock) {
-        const logs = await publicClient
-          .getLogs({
-            address: MARKET_ADDRESS,
-            event: ORDER_FILLED_ABI,
-            args: { marketId },
-            fromBlock,
-            toBlock: currentBlock,
-          })
-          .catch(() => []);
+        const logs = await publicClient.getLogs({
+          address: MARKET_ADDRESS,
+          event: ORDER_FILLED_ABI,
+          args: { marketId },
+          fromBlock,
+          toBlock: currentBlock,
+        });
 
         if (logs.length > 0) {
           const uniqueBlockNumbers = Array.from(

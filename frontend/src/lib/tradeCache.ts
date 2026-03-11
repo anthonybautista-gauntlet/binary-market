@@ -1,7 +1,10 @@
 import { openDB, IDBPDatabase } from 'idb';
 
-const DB_NAME = 'meridian';
-const DB_VERSION = 2;
+const MARKET_ADDRESS = (process.env.NEXT_PUBLIC_MERIDIAN_MARKET_ADDRESS ?? 'unknown').toLowerCase();
+const DEPLOYMENT_BLOCK = process.env.NEXT_PUBLIC_DEPLOYMENT_BLOCK ?? '0';
+// Scope browser cache to deployment identity so redeploys do not mix old/new logs.
+const DB_NAME = `meridian-${MARKET_ADDRESS}-${DEPLOYMENT_BLOCK}`;
+const DB_VERSION = 3;
 
 export type TradeEventType =
   | 'OrderFilled'

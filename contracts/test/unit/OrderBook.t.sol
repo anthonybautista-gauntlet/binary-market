@@ -224,8 +224,8 @@ contract OrderBookTest is Test {
         vm.prank(alice);
         uint256 orderId = market.placeOrder(marketId, OrderBookLib.Side.BID, 60, 3, false);
 
-        vm.expectEmit(true, true, false, true);
-        emit MeridianMarket.OrderCancelled(orderId, alice, 3);
+        vm.expectEmit(true, true, true, true);
+        emit MeridianMarket.OrderCancelled(marketId, orderId, alice, 3);
 
         vm.prank(alice);
         market.cancelOrder(orderId);

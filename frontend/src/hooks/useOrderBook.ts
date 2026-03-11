@@ -119,17 +119,21 @@ export function useOrderBook(marketId: `0x${string}`) {
     },
   });
 
-  // Order cancellations also change depth. Event does not include marketId, so
-  // we refresh current market when any cancel event is observed.
+  // Order cancellations also change depth.
   useWatchContractEvent({
     address: MARKET_ADDRESS,
     abi: MeridianMarketABI.abi,
     eventName: 'OrderCancelled',
     onLogs(logs) {
-      if (logs.length === 0) return;
-      fetchOrderBook().catch(() => {
-        // Ignore transient read errors; next event/poll will recover.
+      const hasRelevantCancel = logs.some((log: any) => {
+        const logMarketId = String(log.args?.marketId ?? '').toLowerCase();
+        return logMarketId === marketId.toLowerCase();
       });
+      if (hasRelevantCancel) {
+        fetchOrderBook().catch(() => {
+          // Ignore transient read errors; next event/poll will recover.
+        });
+      }
     },
   });
 

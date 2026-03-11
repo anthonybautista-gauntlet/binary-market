@@ -247,7 +247,13 @@ Why this is better for scale:
 - **Gas funding** — both wallets need ETH for gas. On Base Sepolia use the [Base faucet](https://www.coinbase.com/faucets/base-ethereum-goerli-faucet).
 - **Order state is in-memory** — restarting the service clears the order ID map. The maker will re-cancel by best-effort and re-quote fresh on the next cycle. Residual unfilled orders from before the restart remain on-chain until they expire or are manually cancelled.
 - **Single instance** — running multiple instances of the maker with the same wallet will cause nonce conflicts. Deploy exactly one instance per wallet.
-- **ABI sync** — the `src/abi/MeridianMarket.json` file must stay in sync with the deployed contract. After any contract redeployment, regenerate it: `cd contracts && forge build && cp out/MeridianMarket.sol/MeridianMarket.json ../maker-bots/src/abi/`
+- **ABI sync** — the `src/abi/MeridianMarket.json` file must stay in sync with the deployed contract. After any contract redeployment, regenerate and extract the ABI array:
+  ```bash
+  cd contracts
+  forge build
+  node -e "const fs=require('fs');const a=JSON.parse(fs.readFileSync('out/MeridianMarket.sol/MeridianMarket.json','utf8'));fs.writeFileSync('../maker-bots/src/abi/MeridianMarket.json', JSON.stringify(a.abi,null,2)+'\n');"
+  ```
+  Then update `MARKET_ADDRESS` in `maker-bots/.env` and restart the service.
 
 ---
 

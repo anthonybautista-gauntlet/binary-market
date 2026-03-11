@@ -413,7 +413,9 @@ forge build --sizes
 
 The `foundry.toml` configuration has two non-default settings worth knowing:
 - `via_ir = true` — enables the Yul IR compilation pipeline. Required to avoid "stack too deep" errors in `OrderBookLib`'s complex matching functions.
-- `optimizer = true` / `optimizer_runs = 100` — required to keep `MeridianMarket`'s bytecode under the 24,576-byte EVM contract size limit. At 100 runs the deployed size is ~24,020 bytes.
+- `optimizer = true` / `optimizer_runs = 100` — required to keep `MeridianMarket`'s bytecode under the 24,576-byte EVM contract size limit. With the current `OrderCancelled(marketId, orderId, owner, remainingQty)` event shape, `forge build --sizes` reports `MeridianMarket` runtime size `23,946` bytes (margin `630` bytes).
+
+Always run `forge build --sizes` before broadcasting when event signatures or storage-heavy logic change.
 
 ---
 

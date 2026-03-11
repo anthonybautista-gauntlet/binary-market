@@ -1,26 +1,15 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { useAccount, useWriteContract, useConfig, useWatchContractEvent } from 'wagmi';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { getPublicClient, readContract } from '@wagmi/core';
-import { parseAbiItem } from 'viem';
+import { useAccount, useConfig, useWriteContract } from 'wagmi';
 import MeridianMarketABI from '@/lib/abi/MeridianMarket.json';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Loader2, X } from 'lucide-react';
+import { useTradeHistory } from '@/hooks/useTradeHistory';
 
 const MARKET_ADDRESS = process.env.NEXT_PUBLIC_MERIDIAN_MARKET_ADDRESS as `0x${string}`;
-const DEPLOYMENT_BLOCK = BigInt(process.env.NEXT_PUBLIC_DEPLOYMENT_BLOCK ?? '0');
-
-const ORDER_PLACED_ABI = parseAbiItem(
-  'event OrderPlaced(bytes32 indexed marketId, uint256 indexed orderId, address indexed owner, uint8 side, uint8 priceCents, uint128 quantity)'
-);
-const ORDER_CANCELLED_ABI = parseAbiItem(
-  'event OrderCancelled(uint256 indexed orderId, address indexed owner, uint128 remainingQty)'
-);
-const ORDER_FILLED_ABI = parseAbiItem(
-  'event OrderFilled(bytes32 indexed marketId, uint256 indexed orderId, address indexed maker, address taker, uint8 side, uint8 priceCents, uint128 qty)'
-);
 
 interface OpenOrder {
   orderId: bigint;
@@ -33,161 +22,174 @@ export function OpenOrders({ marketId }: { marketId: `0x${string}` }) {
   const { address, isConnected } = useAccount();
   const config = useConfig();
   const { writeContractAsync } = useWriteContract();
-  const [orders, setOrders] = useState<OpenOrder[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
+  const {
+    data: tradeEvents = [],
+    isLoading: isLoadingHistory,
+    refetch: refetchHistory,
+  } = useTradeHistory();
   const [cancellingId, setCancellingId] = useState<bigint | null>(null);
-  const [refreshTick, setRefreshTick] = useState(0);
+  const [optimisticallyHiddenOrderIds, setOptimisticallyHiddenOrderIds] = useState<Set<string>>(
+    new Set()
+  );
+  const [inactiveOrderIds, setInactiveOrderIds] = useState<Set<string>>(new Set());
 
-  useEffect(() => {
-    if (!address || !isConnected || !marketId) return;
+  const baseOrders = useMemo(() => {
+    if (!address) return [];
+    const wallet = address.toLowerCase();
+    const targetMarket = marketId.toLowerCase();
 
-    const load = async () => {
-      setIsLoading(true);
-      try {
-        const publicClient = getPublicClient(config);
-        if (!publicClient) { setIsLoading(false); return; }
+    const ordered = [...tradeEvents].sort((a, b) => {
+      if (a.blockNumber !== b.blockNumber) return a.blockNumber - b.blockNumber;
+      return a.logIndex - b.logIndex;
+    });
 
-        const [placed, cancelled] = await Promise.all([
-          publicClient.getLogs({
-            address: MARKET_ADDRESS,
-            event: ORDER_PLACED_ABI,
-            // Filter by owner only. Some public RPCs can under-return when
-            // multiple indexed args are combined in a single log query.
-            // We then filter marketId client-side for correctness.
-            args: { owner: address },
-            fromBlock: DEPLOYMENT_BLOCK,
-          }).catch(() => []),
-          publicClient.getLogs({
-            address: MARKET_ADDRESS,
-            event: ORDER_CANCELLED_ABI,
-            args: { owner: address },
-            fromBlock: DEPLOYMENT_BLOCK,
-          }).catch(() => []),
-        ]);
+    const openByOrderId = new Map<string, OpenOrder>();
+    for (const ev of ordered) {
+      const evMarket = String(ev.marketId ?? '').toLowerCase();
+      const oid = String(ev.orderId ?? '').toLowerCase();
+      if (!oid) continue;
 
-        const cancelledIds = new Set(cancelled.map((l) => String(((l as any).args as any)?.orderId)));
-
-        const expectedOwner = address.toLowerCase();
-        const open = (
-          await Promise.all(
-            placed.map(async (log) => {
-              const { orderId, side, priceCents, quantity } = log.args as any;
-              const logMarketId = String(log.args?.marketId ?? '').toLowerCase();
-              if (logMarketId !== marketId.toLowerCase()) return null;
-              if (cancelledIds.has(String(orderId))) return null;
-
-              const oid = BigInt(orderId);
-
-              // Verify order is still live on-chain.
-              const currentOwner = await readContract(config, {
-                address: MARKET_ADDRESS,
-                abi: MeridianMarketABI.abi as any,
-                functionName: 'orderOwner',
-                args: [oid],
-              }).catch(() => null);
-
-              // If owner lookup succeeds and is not the wallet, this order is not open for user.
-              // If lookup fails (transient RPC issue), we still keep the event-derived candidate
-              // and let subsequent polling/events reconcile.
-              if (currentOwner && String(currentOwner).toLowerCase() !== expectedOwner) return null;
-
-              // Derive remaining qty by subtracting fills for this order.
-              const fills = await publicClient.getLogs({
-                address: MARKET_ADDRESS,
-                event: ORDER_FILLED_ABI,
-                args: { orderId: oid },
-                fromBlock: DEPLOYMENT_BLOCK,
-              }).catch(() => []);
-              const filledQty = fills.reduce(
-                (sum, fillLog) => sum + BigInt((fillLog.args as any)?.qty ?? 0),
-                0n
-              );
-              const placedQty = BigInt(quantity);
-              const remainingQty = placedQty > filledQty ? placedQty - filledQty : 0n;
-              if (remainingQty === 0n) return null;
-
-              return {
-                orderId: oid,
-                side: Number(side),
-                priceCents: Number(priceCents),
-                quantity: remainingQty,
-              } satisfies OpenOrder;
-            })
-          )
-        ).filter(Boolean) as OpenOrder[];
-
-        setOrders(open);
-      } finally {
-        setIsLoading(false);
+      if (ev.eventType === 'OrderPlaced') {
+        if (evMarket !== targetMarket) continue;
+        if (ev.wallet?.toLowerCase() !== wallet) continue;
+        openByOrderId.set(oid, {
+          orderId: BigInt(oid),
+          side: Number(ev.placedSide ?? 0),
+          priceCents: Number(ev.placedPriceCents ?? 0),
+          quantity: BigInt(ev.placedQty ?? 0),
+        });
+        continue;
       }
+
+      // Cancel events are market-scoped and authoritative for open-order removal.
+      if (ev.eventType === 'OrderCancelled') {
+        if (evMarket !== targetMarket) continue;
+        openByOrderId.delete(oid);
+        continue;
+      }
+
+      if (ev.eventType === 'OrderFilled') {
+        if (evMarket !== targetMarket) continue;
+        if (ev.maker?.toLowerCase() !== wallet) continue;
+        const curr = openByOrderId.get(oid);
+        if (!curr) continue;
+        const fillQty = BigInt(ev.qty ?? 0);
+        const nextQty = curr.quantity > fillQty ? curr.quantity - fillQty : 0n;
+        if (nextQty === 0n) openByOrderId.delete(oid);
+        else openByOrderId.set(oid, { ...curr, quantity: nextQty });
+      }
+    }
+
+    return [...openByOrderId.values()].filter((o) => o.quantity > 0n);
+  }, [address, marketId, tradeEvents]);
+
+  const baseOrderIdsRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    baseOrderIdsRef.current = new Set(baseOrders.map((o) => String(o.orderId).toLowerCase()));
+  }, [baseOrders]);
+
+  const orders = useMemo(
+    () =>
+      baseOrders.filter(
+        (o) =>
+          !optimisticallyHiddenOrderIds.has(String(o.orderId).toLowerCase()) &&
+          !inactiveOrderIds.has(String(o.orderId).toLowerCase())
+      ),
+    [baseOrders, optimisticallyHiddenOrderIds, inactiveOrderIds]
+  );
+
+  // Passive self-heal for stale rows: periodically verify displayed orders are
+  // still active in contract metadata and hide definitely inactive ones.
+  useEffect(() => {
+    if (!address || orders.length === 0) return;
+    let cancelled = false;
+
+    const verify = async () => {
+      const inactive: string[] = [];
+      await Promise.all(
+        orders.map(async (order) => {
+          const owner = await readContract(config, {
+            address: MARKET_ADDRESS,
+            abi: MeridianMarketABI.abi as any,
+            functionName: 'orderOwner',
+            args: [order.orderId],
+          }).catch(() => null);
+          const ownerLower = String(owner ?? '').toLowerCase();
+          if (ownerLower === '0x0000000000000000000000000000000000000000') {
+            inactive.push(String(order.orderId).toLowerCase());
+          }
+        })
+      );
+
+      if (cancelled || inactive.length === 0) return;
+      setInactiveOrderIds((prev) => {
+        const next = new Set(prev);
+        for (const id of inactive) next.add(id);
+        return next;
+      });
+      // Pull latest events so history/open-order derivation catches up.
+      await refetchHistory();
     };
 
-    load();
-  }, [address, isConnected, marketId, config, refreshTick]);
-
-  // Fallback polling for environments where event subscriptions are delayed.
-  useEffect(() => {
-    if (!address || !isConnected || !marketId) return;
+    verify();
     const interval = setInterval(() => {
       if (typeof document !== 'undefined' && document.hidden) return;
-      setRefreshTick((v) => v + 1);
-    }, 30_000);
-    return () => clearInterval(interval);
-  }, [address, isConnected, marketId]);
+      verify();
+    }, 15_000);
 
-  useWatchContractEvent({
-    address: MARKET_ADDRESS,
-    abi: MeridianMarketABI.abi,
-    eventName: 'OrderPlaced',
-    onLogs(logs) {
-      const hasRelevant = logs.some((log: any) => {
-        const logMarketId = String(log.args?.marketId ?? '').toLowerCase();
-        const owner = String(log.args?.owner ?? '').toLowerCase();
-        return logMarketId === marketId.toLowerCase() && owner === address?.toLowerCase();
-      });
-      if (hasRelevant) setRefreshTick((v) => v + 1);
-    },
-  });
-
-  useWatchContractEvent({
-    address: MARKET_ADDRESS,
-    abi: MeridianMarketABI.abi,
-    eventName: 'OrderCancelled',
-    onLogs(logs) {
-      const hasRelevant = logs.some(
-        (log: any) => String(log.args?.owner ?? '').toLowerCase() === address?.toLowerCase()
-      );
-      if (hasRelevant) setRefreshTick((v) => v + 1);
-    },
-  });
-
-  // If user's resting order is filled as maker, open orders list should update.
-  useWatchContractEvent({
-    address: MARKET_ADDRESS,
-    abi: MeridianMarketABI.abi,
-    eventName: 'OrderFilled',
-    onLogs(logs) {
-      const hasRelevant = logs.some((log: any) => {
-        const logMarketId = String(log.args?.marketId ?? '').toLowerCase();
-        const maker = String(log.args?.maker ?? '').toLowerCase();
-        return logMarketId === marketId.toLowerCase() && maker === address?.toLowerCase();
-      });
-      if (hasRelevant) setRefreshTick((v) => v + 1);
-    },
-  });
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [address, config, orders, refetchHistory]);
 
   const handleCancel = async (orderId: bigint) => {
     setCancellingId(orderId);
+    const oid = String(orderId).toLowerCase();
     try {
-      await writeContractAsync({
+      // Optimistic UX: hide immediately after user confirms cancel.
+      setOptimisticallyHiddenOrderIds((prev) => {
+        const next = new Set(prev);
+        next.add(oid);
+        return next;
+      });
+
+      const txHash = await writeContractAsync({
         address: MARKET_ADDRESS,
         abi: MeridianMarketABI.abi as any,
         functionName: 'cancelOrder',
         args: [orderId],
       });
-      setOrders((prev) => prev.filter((o) => o.orderId !== orderId));
+      // Ensure we refetch after the cancellation is actually mined.
+      const publicClient = getPublicClient(config);
+      if (publicClient && txHash) {
+        await publicClient.waitForTransactionReceipt({ hash: txHash });
+      }
+      // Force an immediate history refetch so OpenOrders reconciles right away.
+      await refetchHistory();
+      // Re-check shortly after to avoid stale-hide if cancel did not actually
+      // close the order on current market view (Option 2 behavior).
+      setTimeout(async () => {
+        await refetchHistory();
+        const stillLive = baseOrderIdsRef.current.has(oid);
+        setOptimisticallyHiddenOrderIds((prev) => {
+          const next = new Set(prev);
+          // Always release temporary hide after reconciliation.
+          // If stillLive, order reappears; if not, it remains absent naturally.
+          next.delete(oid);
+          return next;
+        });
+        // keep variable read for clarity in debugging paths
+        void stillLive;
+      }, 2500);
     } catch {
       // Ignore — order may have filled between fetch and cancel
+      // Revert optimistic hide on error.
+      setOptimisticallyHiddenOrderIds((prev) => {
+        const next = new Set(prev);
+        next.delete(oid);
+        return next;
+      });
     } finally {
       setCancellingId(null);
     }
@@ -199,7 +201,7 @@ export function OpenOrders({ marketId }: { marketId: `0x${string}` }) {
     <div className="bg-[#0f1217] border border-slate-800 rounded-2xl overflow-hidden">
       <div className="px-5 py-3 border-b border-slate-800/50 flex items-center justify-between">
         <span className="text-[10px] uppercase font-black text-slate-500 tracking-widest">Your Open Orders</span>
-        {isLoading && <Loader2 className="w-3 h-3 animate-spin text-slate-500" />}
+        {isLoadingHistory && <Loader2 className="w-3 h-3 animate-spin text-slate-500" />}
       </div>
       {orders.length === 0 ? (
         <div className="px-5 py-6 text-center">

@@ -154,10 +154,22 @@ After any contract redeployment, regenerate the ABIs used by the other services:
 ```bash
 cd contracts
 forge build
-cp out/MeridianMarket.sol/MeridianMarket.json ../market-service/src/abi/MeridianMarket.json
-cp out/MeridianMarket.sol/MeridianMarket.json ../maker-bots/src/abi/MeridianMarket.json
+cp out/MeridianMarket.sol/MeridianMarket.json ../frontend/src/lib/abi/MeridianMarket.json
+node -e "const fs=require('fs');const a=JSON.parse(fs.readFileSync('out/MeridianMarket.sol/MeridianMarket.json','utf8'));fs.writeFileSync('../market-service/src/abi/MeridianMarket.json', JSON.stringify(a.abi,null,2)+'\n');fs.writeFileSync('../maker-bots/src/abi/MeridianMarket.json', JSON.stringify(a.abi,null,2)+'\n');"
 cp out/MockPyth.sol/MockPyth.json ../market-service/src/abi/MockPyth.json
 ```
+
+For event-shape redeploys (like `OrderCancelled` changes), use this rollout order:
+
+1. Deploy the new `MeridianMarket` and record both **address** and **deployment block**.
+2. Regenerate and propagate ABIs to `frontend`, `market-service`, and `maker-bots`.
+3. Update env vars:
+   - `frontend`: `NEXT_PUBLIC_MERIDIAN_MARKET_ADDRESS`, `NEXT_PUBLIC_DEPLOYMENT_BLOCK`
+   - `market-service`: `MARKET_ADDRESS`
+   - `maker-bots`: `MARKET_ADDRESS`
+4. Restart/redeploy `market-service` first, then `maker-bots`, then `frontend`.
+5. Validate end-to-end on the new contract: place order -> cancel order -> verify cancel appears in `/history` and disappears from `/market/[id]` open orders.
+6. Update all README address references so no package keeps stale contract pointers.
 
 ---
 
@@ -207,8 +219,8 @@ See [maker-bots/README.md](maker-bots/README.md) for the pricing model, tuning p
 cd frontend
 npm install
 cp .env.example .env.local
-# Fill in: NEXT_PUBLIC_MARKET_ADDRESS, NEXT_PUBLIC_USDC_ADDRESS,
-#          NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID, NEXT_PUBLIC_CHAIN_ID
+# Fill in: NEXT_PUBLIC_MERIDIAN_MARKET_ADDRESS, NEXT_PUBLIC_MOCK_USDC_ADDRESS,
+#          NEXT_PUBLIC_WC_PROJECT_ID, NEXT_PUBLIC_CHAIN_ID, NEXT_PUBLIC_DEPLOYMENT_BLOCK
 
 npm run dev          # Starts at http://localhost:3000
 ```
@@ -266,8 +278,8 @@ The frontend reconstructs trade history entirely from on-chain events — no ind
 | `OrderFilled(marketId, orderId, maker, taker, side, priceCents, qty)` | Fill history, avg entry price, realized PnL |
 | `PairMinted(marketId, user, quantity)` | Mint history, cost basis |
 | `OrderPlaced(marketId, orderId, owner, side, priceCents, qty)` | Open orders reconstruction |
-| `OrderCancelled(marketId, orderId)` | Open orders reconstruction |
-| `Redeemed(marketId, user, side, quantity, usdcPayout)` | Realized PnL after settlement |
+| `OrderCancelled(marketId, orderId, owner, remainingQty)` | Cancel history + open-order removal |
+| `Redeemed(marketId, user, quantity, payout)` | Realized PnL after settlement |
 
 Events are fetched incrementally using Viem's `getLogs` and cached in **IndexedDB** so only new blocks are fetched on subsequent page loads.
 

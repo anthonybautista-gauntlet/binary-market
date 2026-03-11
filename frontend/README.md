@@ -67,11 +67,14 @@ npm start
 | `NEXT_PUBLIC_MERIDIAN_MARKET_ADDRESS` | Yes | Deployed `MeridianMarket` contract address |
 | `NEXT_PUBLIC_MOCK_USDC_ADDRESS` | Yes | `MockUSDC` (testnet) or real USDC (mainnet) address |
 | `NEXT_PUBLIC_WC_PROJECT_ID` | Yes | WalletConnect Cloud project ID |
+| `NEXT_PUBLIC_RPC_URL` | Recommended | Dedicated RPC endpoint for reliable event/log reads |
+| `NEXT_PUBLIC_DEPLOYMENT_BLOCK` | Yes | Block number where the current `MeridianMarket` deployment was created |
 
 **Base Sepolia (testnet) values:**
 ```
 NEXT_PUBLIC_MERIDIAN_MARKET_ADDRESS=0x0793531B3CcE2B833298cFeCAEC63ad5c327302d
 NEXT_PUBLIC_MOCK_USDC_ADDRESS=0x036CbD53842c5426634e7929541eC2318f3dCF7e
+NEXT_PUBLIC_DEPLOYMENT_BLOCK=0
 ```
 
 ---
@@ -138,11 +141,11 @@ Logo metadata is configured per ticker in `src/constants/assets.ts`.
 The portfolio and history pages reconstruct wallet activity from on-chain events without an indexer:
 
 1. `useTradeHistory` queries the RPC for `OrderPlaced`, `OrderCancelled`, `OrderFilled`, `PairMinted`, and `Redeemed` events using Viem's `getLogs`.
-2. Events are cached in **IndexedDB** (`meridian` database, `tradeEvents` store) keyed by wallet address + chain ID. Only blocks since the last fetch are requested on subsequent visits, making incremental updates cheap.
+2. Events are cached in **IndexedDB** (`meridian-<marketAddress>-<deploymentBlock>` database) keyed by wallet address + chain ID. This deployment-aware namespace prevents old/new contract history from mixing after redeploys.
 3. `computeMarketPnL` aggregates the event stream to produce per-market `avgEntryPriceCents`, `totalCostUsdc`, `realizedPnlUsdc`, and `fillCount`.
 4. The portfolio table shows: Balance, Exposure, Avg Entry Price, Current Value (Pyth × balance), Unrealized P&L, Realized P&L, and Fill Count.
 
-A **"Sync History"** button allows manual re-fetch of the incremental event window.
+A hidden **"Rebuild Local History Cache"** troubleshooting action clears the wallet cache and reconstructs from chain logs. Daily usage should rely on normal incremental sync.
 
 > **Note on `OrderFilled` availability**: The `OrderFilled` event was added to `MeridianMarket` as part of this frontend upgrade. Fill-based PnL is only available from the block of the new contract deployment forward. Markets traded under the old contract show realized PnL from `Redeemed` events only.
 
@@ -176,9 +179,9 @@ The same logic is exported as `MarketStatusBadge` for use in the market listing 
 
 `OpenOrders` uses event reconstruction plus on-chain verification:
 
-1. Fetches wallet `OrderPlaced` and `OrderCancelled` logs for the current market.
-2. Verifies each candidate order is still live using `orderOwner(orderId)`.
-3. Computes remaining quantity by subtracting `OrderFilled` quantities for that order.
+1. Reconstructs live orders from wallet `OrderPlaced`, `OrderFilled`, and `OrderCancelled` events for the selected market.
+2. Applies `OrderCancelled(marketId, ...)` as the authoritative remove signal for that market.
+3. Uses `orderOwner(orderId)` as a secondary self-heal fallback against rare RPC/event lag.
 4. Renders only currently live orders with accurate remaining size, with a **Cancel** button calling `cancelOrder(orderId)`.
 
 ### 10. On-Chain Order Book
@@ -320,7 +323,7 @@ By default the suite targets `http://localhost:3000`. Set `PLAYWRIGHT_BASE_URL` 
 
 ## Updating ABIs
 
-When `MeridianMarket.sol` is redeployed (e.g. after adding `OrderFilled` event), regenerate the frontend ABI:
+When `MeridianMarket.sol` is redeployed (e.g. event signature changes), regenerate the frontend ABI:
 
 ```bash
 cd ../contracts
@@ -329,6 +332,19 @@ cp out/MeridianMarket.sol/MeridianMarket.json ../frontend/src/lib/abi/MeridianMa
 ```
 
 The ABI is imported directly from `src/lib/abi/` — no code generation step is needed.
+
+After redeploy, update `.env.local` with the new `NEXT_PUBLIC_MERIDIAN_MARKET_ADDRESS` and `NEXT_PUBLIC_DEPLOYMENT_BLOCK` before rebuilding.
+
+### Redeploy rollout checklist
+
+1. Copy the new `MeridianMarket` ABI into `src/lib/abi/MeridianMarket.json`.
+2. Update `NEXT_PUBLIC_MERIDIAN_MARKET_ADDRESS` and `NEXT_PUBLIC_DEPLOYMENT_BLOCK`.
+3. Rebuild/redeploy the frontend.
+4. Confirm cancel flow on the new contract:
+   - place order on `/market/[id]`
+   - cancel order
+   - verify cancel appears in `/history` and open order disappears on `/market/[id]`
+5. Use **Troubleshoot history sync -> Rebuild Local History Cache** only if local browser cache appears stale.
 
 ---
 

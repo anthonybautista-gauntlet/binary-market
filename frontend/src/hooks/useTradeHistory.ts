@@ -13,6 +13,7 @@ import {
 } from '@/lib/tradeCache';
 
 const MARKET_ADDRESS = process.env.NEXT_PUBLIC_MERIDIAN_MARKET_ADDRESS as `0x${string}`;
+const HISTORY_BACKFILL_BLOCKS = 120n;
 
 // Block at which the contract was deployed — used as the starting point on first load.
 // Update this to the actual deployment block to avoid scanning from genesis.
@@ -27,7 +28,7 @@ const ORDER_PLACED_ABI = parseAbiItem(
   'event OrderPlaced(bytes32 indexed marketId, uint256 indexed orderId, address indexed owner, uint8 side, uint8 priceCents, uint128 quantity)'
 );
 const ORDER_CANCELLED_ABI = parseAbiItem(
-  'event OrderCancelled(uint256 indexed orderId, address indexed owner, uint128 remainingQty)'
+  'event OrderCancelled(bytes32 indexed marketId, uint256 indexed orderId, address indexed owner, uint128 remainingQty)'
 );
 const PAIR_MINTED_ABI = parseAbiItem(
   'event PairMinted(bytes32 indexed marketId, address indexed user, uint256 quantity)'
@@ -38,6 +39,15 @@ const REDEEMED_ABI = parseAbiItem(
 
 function toHex(v: string | bigint): string {
   return typeof v === 'bigint' ? `0x${v.toString(16)}` : v;
+}
+
+function computeFromBlock(cachedLastBlock: number | null): bigint {
+  if (cachedLastBlock == null) return DEPLOYMENT_BLOCK;
+  const cursor = BigInt(cachedLastBlock);
+  const rewinded = cursor >= HISTORY_BACKFILL_BLOCKS
+    ? cursor - HISTORY_BACKFILL_BLOCKS + 1n
+    : 0n;
+  return rewinded > DEPLOYMENT_BLOCK ? rewinded : DEPLOYMENT_BLOCK;
 }
 
 export function useTradeHistory() {
@@ -58,19 +68,9 @@ export function useTradeHistory() {
       const publicClient = getPublicClient(config);
       if (!publicClient) return getEventsForWallet(wallet, chainId);
 
-      const existingEvents = await getEventsForWallet(wallet, chainId);
-      const orderToMarket = new Map<string, string>();
-      for (const ev of existingEvents) {
-        if (ev.orderId && ev.marketId) {
-          orderToMarket.set(ev.orderId.toLowerCase(), ev.marketId);
-        }
-      }
-
       const currentBlock = await getBlockNumber(config);
       const cachedLastBlock = await getCursor(wallet, chainId);
-      const fromBlock = cachedLastBlock != null
-        ? BigInt(cachedLastBlock + 1)
-        : DEPLOYMENT_BLOCK;
+      const fromBlock = computeFromBlock(cachedLastBlock);
 
       if (fromBlock > currentBlock) {
         return getEventsForWallet(wallet, chainId);
@@ -86,13 +86,13 @@ export function useTradeHistory() {
           args: { maker: address },
           fromBlock,
           toBlock: currentBlock,
-        }).catch(() => []),
+        }),
         publicClient.getLogs({
           address: MARKET_ADDRESS,
           event: ORDER_FILLED_ABI,
           fromBlock,
           toBlock: currentBlock,
-        }).catch(() => []),
+        }),
       ]);
 
       const seenFillIds = new Set<string>();
@@ -135,7 +135,7 @@ export function useTradeHistory() {
         args: { user: address },
         fromBlock,
         toBlock: currentBlock,
-      }).catch(() => []);
+      });
 
       for (const log of mintedLogs) {
         if (!log.args) continue;
@@ -160,7 +160,7 @@ export function useTradeHistory() {
         args: { user: address },
         fromBlock,
         toBlock: currentBlock,
-      }).catch(() => []);
+      });
 
       for (const log of redeemedLogs) {
         if (!log.args) continue;
@@ -186,14 +186,13 @@ export function useTradeHistory() {
         args: { owner: address },
         fromBlock,
         toBlock: currentBlock,
-      }).catch(() => []);
+      });
 
       for (const log of placedLogs) {
         if (!log.args) continue;
         const { marketId, orderId, side, priceCents, quantity } = log.args as any;
         const orderHex = toHex(orderId).toLowerCase();
         const marketHex = toHex(marketId);
-        orderToMarket.set(orderHex, marketHex);
 
         newEvents.push({
           id: `${log.transactionHash}-${log.logIndex}`,
@@ -218,13 +217,13 @@ export function useTradeHistory() {
         args: { owner: address },
         fromBlock,
         toBlock: currentBlock,
-      }).catch(() => []);
+      });
 
       for (const log of cancelledLogs) {
         if (!log.args) continue;
-        const { orderId, remainingQty } = log.args as any;
+        const { marketId, orderId, remainingQty } = log.args as any;
         const orderHex = toHex(orderId).toLowerCase();
-        const marketHex = orderToMarket.get(orderHex) ?? '';
+        const marketHex = toHex(marketId);
 
         newEvents.push({
           id: `${log.transactionHash}-${log.logIndex}`,

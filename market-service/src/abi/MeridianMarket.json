@@ -1497,6 +1497,12 @@
     "name": "OrderCancelled",
     "inputs": [
       {
+        "name": "marketId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
         "name": "orderId",
         "type": "uint256",
         "indexed": true,
