@@ -17,6 +17,7 @@ export function Navbar() {
             <Link href="/markets" className="hover:text-white transition-colors">Markets</Link>
             <Link href="/portfolio" className="hover:text-white transition-colors">Portfolio</Link>
             <Link href="/history" className="hover:text-white transition-colors">History</Link>
+            <Link href="/docs" className="hover:text-white transition-colors">Docs</Link>
           </div>
         </div>
 

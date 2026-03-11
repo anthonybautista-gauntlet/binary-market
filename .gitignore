@@ -7,9 +7,6 @@ contracts/out/
 contracts/broadcast/*/31337/
 contracts/broadcast/**/dry-run/
 
-# Docs
-docs/
-
 # Dotenv files
 .env
 contracts/.env
