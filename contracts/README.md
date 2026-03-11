@@ -631,7 +631,7 @@ forge script script/AdminSettle.s.sol \
 - The test suite (continues using `MockPyth` for local unit tests)
 - The settlement window logic or confidence/exponent validation
 
-> **Current Base Sepolia deployment**: The `MeridianMarket` contract at `0x0793531B3CcE2B833298cFeCAEC63ad5c327302d` has already been switched to the real Pyth oracle via `setOracle`. The `market-service` is configured accordingly with `IS_TESTNET=true` (to enable the hourly price pusher) and `PYTH_ADDRESS=0xA2aa501b19aff244D90cc15a4Cf739D2725B5729`.
+> **Current Base Sepolia deployment**: `MeridianMarket=0xfD3360CAB05e19beFdB76A4E74362109490521ef`, `MockUSDC=0x1907827426fbE7F79801425014CA32c53C104DB3`, `Pyth=0xA2aa501b19aff244D90cc15a4Cf739D2725B5729`. The market contract has already been switched to the real Pyth oracle via `setOracle`. The `market-service` is configured with `IS_TESTNET=true` (to enable the hourly price pusher).
 
 ---
 

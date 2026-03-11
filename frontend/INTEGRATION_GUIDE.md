@@ -4,7 +4,7 @@
 
 | Contract | Address |
 |---|---|
-| MeridianMarket | `0x0793531B3CcE2B833298cFeCAEC63ad5c327302d` |
+| MeridianMarket | `0xfD3360CAB05e19beFdB76A4E74362109490521ef` |
 | MockUSDC | `0x1907827426fbE7F79801425014CA32c53C104DB3` |
 | Pyth Oracle | `0xA2aa501b19aff244D90cc15a4Cf739D2725B5729` |
 

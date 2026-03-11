@@ -116,8 +116,8 @@ See [frontend/README.md](frontend/README.md) for setup and WalletConnect configu
 
 | Contract | Address |
 |----------|---------|
-| `MeridianMarket` | `0xB25ad0cB6F7555625C3b423928D216e1BF3D4Aa6` |
-| `MockUSDC` | `0x036CbD53842c5426634e7929541eC2318f3dCF7e` |
+| `MeridianMarket` | `0xfD3360CAB05e19beFdB76A4E74362109490521ef` |
+| `MockUSDC` | `0x1907827426fbE7F79801425014CA32c53C104DB3` |
 | Pyth oracle | `0xA2aa501b19aff244D90cc15a4Cf739D2725B5729` |
 
 ---
