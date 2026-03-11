@@ -10,7 +10,7 @@
  * after 16:00 ET once the market has closed.
  */
 
-import yahooFinance from "yahoo-finance2";
+import YahooFinance from "yahoo-finance2";
 import { logger } from "../logger.js";
 import { config } from "../config.js";
 
@@ -26,6 +26,7 @@ const YAHOO_MODULE_OPTIONS = {
     },
   },
 } as const;
+const yahooFinance = new YahooFinance(YAHOO_MODULE_OPTIONS);
 
 /**
  * Fetch the most recent closing prices for all configured MAG7 tickers.
@@ -40,7 +41,7 @@ export async function fetchYahooClosingPrices(): Promise<TickerPrices> {
     config.tickers.map(async (ticker) => {
       try {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const quote: any = await yahooFinance.quote(ticker, {}, YAHOO_MODULE_OPTIONS);
+        const quote: any = await yahooFinance.quote(ticker, {});
         const price: number | undefined = quote?.regularMarketPrice ?? quote?.regularMarketClose;
         if (price == null || price <= 0) {
           logger.warn({ ticker }, "Yahoo Finance returned null/zero price");
