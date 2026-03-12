@@ -49,6 +49,60 @@ export function getAdminWallet(): NonceManager {
   return _adminWallet;
 }
 
+const walletQueues = new WeakMap<NonceManager, Promise<void>>();
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isNonceSyncError(err: unknown): boolean {
+  if (!err || typeof err !== "object") return false;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const e = err as any;
+  const code = String(e.code ?? "");
+  const msg = String(e.message ?? "").toLowerCase();
+  return (
+    code === "NONCE_EXPIRED" ||
+    msg.includes("nonce too low") ||
+    msg.includes("nonce has already been used") ||
+    msg.includes("already known") ||
+    msg.includes("replacement transaction underpriced")
+  );
+}
+
+async function runWalletWrite<T>(
+  wallet: NonceManager,
+  action: string,
+  fn: () => Promise<T>
+): Promise<T> {
+  const previous = walletQueues.get(wallet) ?? Promise.resolve();
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  walletQueues.set(wallet, previous.catch(() => {}).then(() => gate));
+
+  await previous.catch(() => {});
+  try {
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        return await fn();
+      } catch (err) {
+        if (attempt === 1 && isNonceSyncError(err)) {
+          wallet.reset();
+          logger.warn({ err, action }, "Nonce drift detected, retrying write once");
+          await sleep(250);
+          continue;
+        }
+        throw err;
+      }
+    }
+    throw new Error(`Unreachable nonce retry path for action=${action}`);
+  } finally {
+    release();
+  }
+}
+
 // ── Types ────────────────────────────────────────────────────────────────────
 
 export interface MarketView {
@@ -166,7 +220,9 @@ export async function createStrikeMarket(
     "Sending createStrikeMarket tx"
   );
 
-  const tx = await contract.createStrikeMarket(tickerBytes32, strikePrice, expiryTimestamp);
+  const tx = await runWalletWrite(wallet, "market.createStrikeMarket", () =>
+    contract.createStrikeMarket(tickerBytes32, strikePrice, expiryTimestamp)
+  );
   const receipt = await tx.wait();
 
   // Parse the MarketCreated event to get the marketId
@@ -208,12 +264,14 @@ export async function settleMarket(
     "Sending settleMarket tx"
   );
 
-  const tx = await contract.settleMarket(
-    marketId,
-    priceUpdate,
-    minPublishTime,
-    maxPublishTime,
-    { value: pythFeeWei }
+  const tx = await runWalletWrite(wallet, "market.settleMarket", () =>
+    contract.settleMarket(
+      marketId,
+      priceUpdate,
+      minPublishTime,
+      maxPublishTime,
+      { value: pythFeeWei }
+    )
   );
   await tx.wait();
 }
@@ -244,7 +302,9 @@ export async function adminSettleOverride(marketId: string, manualPrice: bigint)
     "Sending adminSettleOverride tx"
   );
 
-  const tx = await contract.adminSettleOverride(marketId, manualPrice);
+  const tx = await runWalletWrite(wallet, "market.adminSettleOverride", () =>
+    contract.adminSettleOverride(marketId, manualPrice)
+  );
   await tx.wait();
 }
 
@@ -266,7 +326,9 @@ export async function pushPythPriceUpdates(updateData: string[]): Promise<void> 
     fee = 1n;
   }
 
-  const tx = await pythContract.updatePriceFeeds(updateData, { value: fee });
+  const tx = await runWalletWrite(wallet, "pyth.updatePriceFeeds", () =>
+    pythContract.updatePriceFeeds(updateData, { value: fee })
+  );
   await tx.wait();
   logger.debug({ count: updateData.length }, "Pyth prices updated");
 }

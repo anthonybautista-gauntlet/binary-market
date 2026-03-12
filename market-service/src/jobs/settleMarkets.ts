@@ -30,6 +30,104 @@ const log = jobLogger("settleMarkets");
 /** Settlement window half-widths in seconds. Total must be ≤ MAX_PARSE_WINDOW (900s). */
 const WINDOW_BEFORE_S = 300; // 5 min before expiry
 const WINDOW_AFTER_S  = 600; // 10 min after expiry
+const FINAL_RETRY_LIMIT = 25;
+
+async function settleOneMarket(
+  market: MarketView,
+  feedId: string
+): Promise<"settled" | "skipped" | "error"> {
+  const expiryUnix = Number(market.expiryTimestamp);
+  const minPublishTime = expiryUnix - WINDOW_BEFORE_S;
+  const maxPublishTime = expiryUnix + WINDOW_AFTER_S;
+  const ticker = bytes32ToTicker(market.ticker);
+
+  log.info(
+    {
+      marketId: market.marketId,
+      ticker,
+      strike: pythUnitsToDollars(market.strikePrice),
+      expiryUnix,
+      minPublishTime,
+      maxPublishTime,
+    },
+    "Fetching settlement price from Hermes"
+  );
+
+  let hermesPrices;
+  try {
+    hermesPrices = await fetchPricesAtTime([feedId], expiryUnix);
+  } catch (err) {
+    log.error({ err, marketId: market.marketId, ticker }, "Hermes fetch failed — skipping market");
+    return "error";
+  }
+
+  if (hermesPrices.parsed.length === 0) {
+    log.error({ marketId: market.marketId, ticker }, "No Hermes data returned — skipping");
+    return "error";
+  }
+
+  const parsedPrice = hermesPrices.parsed[0];
+  log.info(
+    {
+      feedId,
+      publishTime: parsedPrice.publishTime,
+      price: parsedPrice.price.toString(),
+      display: pythUnitsToDollars(parsedPrice.price),
+    },
+    "Settlement price received"
+  );
+
+  if (
+    parsedPrice.publishTime < minPublishTime ||
+    parsedPrice.publishTime > maxPublishTime
+  ) {
+    log.error(
+      {
+        publishTime: parsedPrice.publishTime,
+        minPublishTime,
+        maxPublishTime,
+        marketId: market.marketId,
+      },
+      "Hermes publishTime outside settlement window — cannot settle"
+    );
+    return "error";
+  }
+
+  const priceUpdate = buildUpdateData(hermesPrices.parsed, hermesPrices.binaryData);
+
+  let pythFee: bigint;
+  try {
+    pythFee = await getPythUpdateFee(priceUpdate);
+  } catch {
+    pythFee = 1n;
+  }
+
+  try {
+    await settleMarket(
+      market.marketId,
+      priceUpdate,
+      minPublishTime,
+      maxPublishTime,
+      pythFee
+    );
+    log.info(
+      {
+        marketId: market.marketId,
+        ticker,
+        strike: pythUnitsToDollars(market.strikePrice),
+        settlePrice: pythUnitsToDollars(parsedPrice.price),
+      },
+      "Market settled successfully"
+    );
+    return "settled";
+  } catch (err) {
+    log.error(
+      { err, marketId: market.marketId, ticker },
+      "settleMarket tx failed — manual review required"
+    );
+    return "error";
+  }
+}
 
 /** Main entry point called by the scheduler. */
 export async function runSettleMarkets(): Promise<void> {
@@ -84,105 +182,48 @@ export async function runSettleMarkets(): Promise<void> {
 
   for (const [feedId, markets] of byFeed.entries()) {
     for (const market of markets) {
-      const expiryUnix = Number(market.expiryTimestamp);
-      const minPublishTime = expiryUnix - WINDOW_BEFORE_S;
-      const maxPublishTime = expiryUnix + WINDOW_AFTER_S;
-      const ticker = bytes32ToTicker(market.ticker);
+      const result = await settleOneMarket(market, feedId);
+      if (result === "settled") totalSettled++;
+      if (result === "error") totalErrors++;
+    }
+  }
 
-      log.info(
+  // ── 4. Final failsafe sweep: retry a bounded set of still-unsettled markets ─
+  try {
+    const latest = await getRecentMarkets(await getMarketCount());
+    const initialIds = new Set(toSettle.map((m) => m.marketId.toLowerCase()));
+    const remaining = latest.filter(
+      (m) =>
+        !m.settled &&
+        m.expiryTimestamp <= BigInt(nowUnix) &&
+        initialIds.has(m.marketId.toLowerCase())
+    );
+
+    if (remaining.length > 0) {
+      const retryBatch = remaining.slice(0, FINAL_RETRY_LIMIT);
+      log.warn(
         {
-          marketId: market.marketId,
-          ticker,
-          strike: pythUnitsToDollars(market.strikePrice),
-          expiryUnix,
-          minPublishTime,
-          maxPublishTime,
+          remaining: remaining.length,
+          retryingNow: retryBatch.length,
+          limit: FINAL_RETRY_LIMIT,
         },
-        "Fetching settlement price from Hermes"
+        "Final unsettled sweep detected remaining markets; retrying before exit"
       );
 
-      let hermesPrices;
-      try {
-        // Fetch price at the expiry timestamp (Hermes returns nearest available)
-        hermesPrices = await fetchPricesAtTime([feedId], expiryUnix);
-      } catch (err) {
-        log.error({ err, marketId: market.marketId, ticker }, "Hermes fetch failed — skipping market");
-        totalErrors++;
-        continue;
-      }
-
-      if (hermesPrices.parsed.length === 0) {
-        log.error({ marketId: market.marketId, ticker }, "No Hermes data returned — skipping");
-        totalErrors++;
-        continue;
-      }
-
-      const parsedPrice = hermesPrices.parsed[0];
-      log.info(
-        {
-          feedId,
-          publishTime: parsedPrice.publishTime,
-          price: parsedPrice.price.toString(),
-          display: pythUnitsToDollars(parsedPrice.price),
-        },
-        "Settlement price received"
-      );
-
-      // Validate the publish time falls within the settlement window
-      if (
-        parsedPrice.publishTime < minPublishTime ||
-        parsedPrice.publishTime > maxPublishTime
-      ) {
-        log.error(
-          {
-            publishTime: parsedPrice.publishTime,
-            minPublishTime,
-            maxPublishTime,
-            marketId: market.marketId,
-          },
-          "Hermes publishTime outside settlement window — cannot settle"
-        );
-        totalErrors++;
-        continue;
-      }
-
-      // Build the priceUpdate bytes for the target Pyth contract
-      const priceUpdate = buildUpdateData(hermesPrices.parsed, hermesPrices.binaryData);
-
-      // Get Pyth fee
-      let pythFee: bigint;
-      try {
-        pythFee = await getPythUpdateFee(priceUpdate);
-      } catch {
-        pythFee = 1n;
-      }
-
-      try {
-        await settleMarket(
-          market.marketId,
-          priceUpdate,
-          minPublishTime,
-          maxPublishTime,
-          pythFee
-        );
-        log.info(
-          {
-            marketId: market.marketId,
-            ticker,
-            strike: pythUnitsToDollars(market.strikePrice),
-            settlePrice: pythUnitsToDollars(parsedPrice.price),
-          },
-          "Market settled successfully"
-        );
-        totalSettled++;
-      } catch (err) {
-        log.error(
-          { err, marketId: market.marketId, ticker },
-          "settleMarket tx failed — manual review required"
-        );
-        totalErrors++;
+      for (const market of retryBatch) {
+        const ticker = bytes32ToTicker(market.ticker);
+        const feedId = config.feeds[ticker];
+        if (!feedId) {
+          totalErrors++;
+          continue;
+        }
+        const result = await settleOneMarket(market, feedId);
+        if (result === "settled") totalSettled++;
+        if (result === "error") totalErrors++;
       }
     }
+  } catch (err) {
+    log.error({ err }, "Final unsettled sweep failed");
   }
 
   log.info(
