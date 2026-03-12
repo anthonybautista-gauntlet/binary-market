@@ -82,6 +82,8 @@ export const config = {
   buyerReserveDepth: BigInt(optionalInt("BUYER_RESERVE_DEPTH", 5)),
   // Cron expression for the buyer bot (default: every 30 minutes).
   buyerCron: optionalEnv("BUYER_CRON", "*/30 * * * *"),
+  // Maximum time to wait for a tx receipt before treating it as failed.
+  txWaitTimeoutMs: optionalInt("TX_WAIT_TIMEOUT_MS", 180_000),
 
   // ── Feed IDs (MAG7, Base mainnet/testnet) ─────────────────────────────────
   feeds: {

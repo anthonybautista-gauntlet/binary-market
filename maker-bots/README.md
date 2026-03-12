@@ -155,6 +155,7 @@ fairValue   = 50 + tanh(x × timeWeight × MAKER_SENSITIVITY) × 50
 | `BUYER_MIN_BID_DEPTH` | `5` | Minimum BID depth to proceed with a buy |
 | `BUYER_RESERVE_DEPTH` | `5` | Units to leave on the book after buying |
 | `BUYER_CRON` | `*/30 * * * *` | Cron for buyer bot |
+| `TX_WAIT_TIMEOUT_MS` | `180000` | Max ms to wait for tx receipt before failing fast |
 | `LOG_LEVEL` | `info` | Pino log level |
 
 ---
@@ -247,6 +248,7 @@ Why this is better for scale:
 - **Gas funding** — both wallets need ETH for gas. On Base Sepolia use the [Base faucet](https://www.coinbase.com/faucets/base-ethereum-goerli-faucet).
 - **Order state is in-memory** — restarting the service clears the order ID map. The maker will re-cancel by best-effort and re-quote fresh on the next cycle. Residual unfilled orders from before the restart remain on-chain until they expire or are manually cancelled.
 - **Single instance** — running multiple instances of the maker with the same wallet will cause nonce conflicts. Deploy exactly one instance per wallet.
+- **Tx receipt timeout** — if RPC nodes stop returning receipts promptly, bot writes now fail after `TX_WAIT_TIMEOUT_MS` instead of hanging an entire cycle indefinitely.
 - **ABI sync** — the `src/abi/MeridianMarket.json` file must stay in sync with the deployed contract. After any contract redeployment, regenerate and extract the ABI array:
   ```bash
   cd contracts

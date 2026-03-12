@@ -114,6 +114,27 @@ async function runWalletWrite<T>(
   }
 }
 
+async function waitForReceipt(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  tx: any,
+  action: string
+) {
+  try {
+    return await tx.wait(1, config.txWaitTimeoutMs);
+  } catch (err) {
+    logger.error(
+      {
+        err,
+        action,
+        hash: tx?.hash,
+        timeoutMs: config.txWaitTimeoutMs,
+      },
+      "Timed out waiting for tx receipt"
+    );
+    throw err;
+  }
+}
+
 function marketRead(): Contract {
   return new Contract(config.marketAddress, MeridianMarketAbi, getProvider());
 }
@@ -254,7 +275,7 @@ export async function ensureUsdcBalance(
   const tx = await runWalletWrite(wallet, "usdc.mint", () =>
     usdcWrite(wallet).mint(address, needed)
   );
-  await tx.wait();
+  await waitForReceipt(tx, "usdc.mint");
   logger.debug({ address, needed: needed.toString() }, "USDC minted");
 }
 
@@ -274,7 +295,7 @@ export async function ensureUsdcAllowance(
   const tx = await runWalletWrite(wallet, "usdc.approve", () =>
     usdcWrite(wallet).approve(config.marketAddress, MaxUint256)
   );
-  await tx.wait();
+  await waitForReceipt(tx, "usdc.approve");
   logger.debug({ address }, "USDC approved (MaxUint256)");
 }
 
@@ -294,7 +315,7 @@ export async function ensureErc1155Approval(wallet: NonceManager): Promise<void>
   const tx = await runWalletWrite(wallet, "market.setApprovalForAll", () =>
     marketWrite(wallet).setApprovalForAll(config.marketAddress, true)
   );
-  await tx.wait();
+  await waitForReceipt(tx, "market.setApprovalForAll");
   logger.debug({ address }, "ERC1155 approval set");
 }
 
@@ -315,7 +336,7 @@ export async function mintPair(
   const tx = await runWalletWrite(wallet, "market.mintPair", () =>
     marketWrite(wallet).mintPair(marketId, quantity, { gasLimit: 300_000n })
   );
-  await tx.wait();
+  await waitForReceipt(tx, "market.mintPair");
 }
 
 /**
@@ -343,7 +364,10 @@ export async function placeOrder(
   const tx = await runWalletWrite(wallet, "market.placeOrder", () =>
     contract.placeOrder(marketId, side, priceCents, quantity, isIOC, { gasLimit: 1_500_000n })
   );
-  const receipt = await tx.wait();
+  const receipt = await waitForReceipt(tx, "market.placeOrder");
+  if (!receipt) {
+    throw new Error("placeOrder receipt missing after wait timeout");
+  }
 
   // Parse OrderPlaced event to extract the orderId
   const iface = contract.interface;
@@ -377,7 +401,7 @@ export async function bulkCancelOrders(
   const tx = await runWalletWrite(wallet, "market.bulkCancelOrders", () =>
     marketWrite(wallet).bulkCancelOrders(orderIds, { gasLimit })
   );
-  await tx.wait();
+  await waitForReceipt(tx, "market.bulkCancelOrders");
   logger.debug({ count: orderIds.length }, "Orders cancelled");
 }
 
@@ -408,5 +432,5 @@ export async function buyNoMarket(
       maxFills
     )
   );
-  await tx.wait();
+  await waitForReceipt(tx, "market.buyNoMarket");
 }
