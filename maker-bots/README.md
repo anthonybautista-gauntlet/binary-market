@@ -1,4 +1,4 @@
-# Meridian Maker Bots
+# Meridian Maker Bots 
 
 Automated market-making and directional trading bots for the Meridian binary-outcome market protocol.
 
