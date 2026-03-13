@@ -25,10 +25,14 @@ export function useMeridianMarket() {
     }
   });
 
-  const parsedMarkets = (markets as any[])?.map(m => ({
-    ...m,
-    ticker: hexToString(m.ticker, { size: 32 }).replace(/\0/g, ''),
-  })) || [];
+  const parsedMarkets = (markets as any[])?.map(m => {
+    const tickerBytes = m.ticker ?? m[1];
+    return {
+      ...m,
+      marketId: m.marketId ?? m[0],
+      ticker: hexToString(tickerBytes, { size: 32 }).replace(/\0/g, ''),
+    };
+  }) || [];
 
   return {
     marketCount: marketCount ? Number(marketCount) : 0,

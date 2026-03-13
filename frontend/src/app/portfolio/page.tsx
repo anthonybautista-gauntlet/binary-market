@@ -1,8 +1,10 @@
 'use client';
 
+import { useState } from 'react';
 import { Navbar } from '@/components/Navbar';
-import { useAccount, useReadContracts } from 'wagmi';
+import { useAccount, useConfig, useReadContracts } from 'wagmi';
 import MeridianMarketABI from '@/lib/abi/MeridianMarket.json';
+import { clearCacheForWallet } from '@/lib/tradeCache';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
@@ -11,7 +13,7 @@ import { keccak256, encodeAbiParameters, parseAbiParameters } from 'viem';
 import { useMeridianMarket } from '@/hooks/useContracts';
 import { useUSDCData } from '@/hooks/useUSDCData';
 import { usePythPrices } from '@/hooks/usePythPrices';
-import { useTradeHistory, computeMarketPnL } from '@/hooks/useTradeHistory';
+import { useTradeHistory, computeMarketPnL, normalizeMarketIdKey } from '@/hooks/useTradeHistory';
 import { ASSET_META, PYTH_FEED_IDS, Ticker } from '@/constants/assets';
 import { TickerLogo } from '@/components/TickerLogo';
 import { Loader2, Briefcase, ExternalLink, RefreshCw } from 'lucide-react';
@@ -35,10 +37,13 @@ function formatPnl(v: number | null): string {
 
 export default function PortfolioPage() {
   const { address, isConnected } = useAccount();
+  const config = useConfig();
+  const chainId = config.state.chainId ?? 84532;
   const { markets, isLoadingMarkets } = useMeridianMarket();
   const { formattedBalance } = useUSDCData();
   const { data: prices } = usePythPrices();
   const { data: tradeEvents = [], isLoading: isLoadingHistory, refetch: refetchHistory } = useTradeHistory();
+  const [isResyncing, setIsResyncing] = useState(false);
 
   const pnlByMarket = address
     ? computeMarketPnL(tradeEvents, address)
@@ -98,19 +103,28 @@ export default function PortfolioPage() {
     const currentPrice = prices ? prices[feedId] : null;
     const strikePrice = Number(market.strikePrice) / 1e5;
 
-    // Implied current value: yesBalance * bestBid (approximated from currentPrice vs strike)
-    // Since we don't have live best bid/ask here, use Pyth price as probability proxy:
-    //   implied YES value ≈ clamp(currentPrice / strike, 0, 1) * $1.00
-    // This is a rough approximation for display purposes. Live order book prices are shown on the trade screen.
+    // Current value: for settled markets use redemption value ($1 per winning token, $0 per losing).
+    // For live markets, approximate with Pyth price vs strike as probability proxy.
     let impliedValue: number | null = null;
-    if (currentPrice != null && (yesBalance > 0n || noBalance > 0n)) {
+    if (market.settled) {
+      // Settled: winning side redeems $1 per token, losing side is worthless.
+      impliedValue = market.yesWins ? Number(yesBalance) : Number(noBalance);
+    } else if (currentPrice != null && (yesBalance > 0n || noBalance > 0n)) {
       const prob = Math.min(1, Math.max(0, currentPrice / strikePrice));
       const yesVal = Number(yesBalance) * prob;
       const noVal = Number(noBalance) * (1 - prob);
       impliedValue = yesVal + noVal;
     }
 
-    const pnlData = pnlByMarket.get(market.marketId as string);
+    const marketIdKey = normalizeMarketIdKey(market.marketId ?? (market as any)[0]);
+    const pnlData = marketIdKey ? pnlByMarket.get(marketIdKey) : undefined;
+    const totalTokens = Number(yesBalance) + Number(noBalance);
+    // Use fill-based avg when present; otherwise derive from cost (e.g. NO from buyNoMarket / mints)
+    const avgEntryPriceCents =
+      pnlData?.avgEntryPriceCents ??
+      (pnlData && pnlData.totalCostUsdc > 0 && totalTokens > 0
+        ? (pnlData.totalCostUsdc / totalTokens) * 100
+        : null);
 
     return {
       marketId: market.marketId as `0x${string}`,
@@ -121,8 +135,8 @@ export default function PortfolioPage() {
       settled: market.settled,
       yesWins: market.yesWins,
       impliedValue,
-      avgEntryPriceCents: pnlData?.avgEntryPriceCents ?? null,
-      unrealizedPnl: impliedValue != null && pnlData?.totalCostUsdc != null
+      avgEntryPriceCents,
+      unrealizedPnl: impliedValue != null && pnlData != null
         ? impliedValue - pnlData.totalCostUsdc
         : null,
       realizedPnl: pnlData?.realizedPnlUsdc ?? null,
@@ -158,12 +172,23 @@ export default function PortfolioPage() {
             <Button
               variant="outline"
               size="sm"
-              onClick={() => refetchHistory()}
-              disabled={isLoadingHistory}
+              onClick={async () => {
+                if (!address || isResyncing || isLoadingHistory) return;
+                setIsResyncing(true);
+                try {
+                  await clearCacheForWallet(address.toLowerCase(), chainId);
+                  await refetchHistory();
+                } finally {
+                  setIsResyncing(false);
+                }
+              }}
+              disabled={isLoadingHistory || isResyncing}
               className="border-slate-800 text-slate-400 hover:text-white hover:bg-slate-800 h-10 rounded-xl gap-2"
             >
-              <RefreshCw className={`w-3.5 h-3.5 ${isLoadingHistory ? 'animate-spin' : ''}`} />
-              <span className="text-[10px] font-black uppercase tracking-widest">Sync History</span>
+              <RefreshCw className={`w-3.5 h-3.5 ${isLoadingHistory || isResyncing ? 'animate-spin' : ''}`} />
+              <span className="text-[10px] font-black uppercase tracking-widest">
+                {isResyncing ? 'Resyncing…' : 'Resync P&L history'}
+              </span>
             </Button>
           </div>
         </div>
@@ -181,6 +206,11 @@ export default function PortfolioPage() {
                     <Loader2 className="w-3 h-3 animate-spin" />
                     Syncing P&amp;L history...
                   </div>
+                )}
+                {!isLoadingHistory && holdings.length > 0 && tradeEvents.length === 0 && (
+                  <p className="text-[10px] text-amber-400/90 font-bold uppercase tracking-widest">
+                    Avg &amp; P&amp;L need trade history — click &quot;Resync P&amp;L history&quot; above.
+                  </p>
                 )}
               </div>
             </CardHeader>

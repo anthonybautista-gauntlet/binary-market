@@ -40,7 +40,17 @@ const REDEEMED_ABI = parseAbiItem(
 );
 
 function toHex(v: string | bigint): string {
-  return typeof v === 'bigint' ? `0x${v.toString(16)}` : v;
+  if (typeof v === 'bigint') {
+    return '0x' + v.toString(16).padStart(64, '0');
+  }
+  return v;
+}
+
+/** Normalize marketId to a canonical 0x+64 hex key so event id and getMarkets() id match. */
+export function normalizeMarketIdKey(marketId: string | bigint | undefined): string {
+  if (marketId == null) return '';
+  const n = typeof marketId === 'bigint' ? marketId : BigInt(marketId);
+  return ('0x' + n.toString(16).padStart(64, '0')).toLowerCase();
 }
 
 function computeFromBlock(cachedLastBlock: number | null): bigint {
@@ -323,16 +333,17 @@ export function computeMarketPnL(events: TradeEvent[], wallet: string): Map<stri
   const result = new Map<string, MarketPnL>();
 
   const ensure = (marketId: string) => {
-    if (!result.has(marketId)) {
-      result.set(marketId, {
-        marketId,
+    const key = normalizeMarketIdKey(marketId) || marketId.toLowerCase();
+    if (!result.has(key)) {
+      result.set(key, {
+        marketId: key,
         avgEntryPriceCents: null,
         totalCostUsdc: 0,
         realizedPnlUsdc: null,
         fillCount: 0,
       });
     }
-    return result.get(marketId)!;
+    return result.get(key)!;
   };
 
   const walletLower = wallet.toLowerCase();
@@ -344,21 +355,33 @@ export function computeMarketPnL(events: TradeEvent[], wallet: string): Map<stri
       const qty = Number(ev.qty);
       const price = ev.priceCents;
       const costUsdc = (qty * price * 10000) / 1e6;
+      // Event side = order side that was filled: 0 = BID (maker bought YES), 1 = ASK (maker sold YES)
 
       if (ev.taker?.toLowerCase() === walletLower) {
-        // Wallet was the BID taker — bought YES tokens
         if (ev.side === 0) {
+          // Event side 0 = taker bought YES (e.g. sellNoMarket) → we paid USDC
           entry.totalCostUsdc += costUsdc;
           entry.fillCount++;
-          // Update weighted avg
           const prevTotal = (entry.avgEntryPriceCents ?? 0) * (entry.fillCount - 1);
           entry.avgEntryPriceCents = (prevTotal + price) / entry.fillCount;
+        } else {
+          // ASK filled — we were taker selling YES (e.g. buyNoMarket) → we received USDC
+          entry.totalCostUsdc -= costUsdc;
+          entry.fillCount++;
         }
       }
       if (ev.maker?.toLowerCase() === walletLower) {
-        // Wallet was ASK maker — sold YES tokens, received USDC
-        entry.totalCostUsdc -= costUsdc;
-        entry.fillCount++;
+        if (ev.side === 0) {
+          // Event side 0 = taker bought YES → we (maker) sold YES, received USDC
+          entry.totalCostUsdc -= costUsdc;
+          entry.fillCount++;
+        } else {
+          // Event side 1 = taker sold YES → we (maker) bought YES
+          entry.totalCostUsdc += costUsdc;
+          entry.fillCount++;
+          const prevTotal = (entry.avgEntryPriceCents ?? 0) * (entry.fillCount - 1);
+          entry.avgEntryPriceCents = (prevTotal + price) / entry.fillCount;
+        }
       }
     }
 
