@@ -116,6 +116,8 @@ export default function MarketDetailPage({ params }: { params: Promise<{ id: str
               marketId={marketId}
               ticker={ticker}
               strikePrice={strikePrice}
+              settled={market.settled}
+              expiryTimestamp={market.expiryTimestamp}
             />
           </div>
         </div>

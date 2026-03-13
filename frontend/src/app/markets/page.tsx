@@ -43,7 +43,7 @@ export default function MarketsPage() {
   const { data: prices } = usePythPrices();
 
   const [tickerFilter, setTickerFilter] = useState<string>('ALL');
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('live');
 
   // Derive the unique tickers that actually have markets on-chain
   const availableTickers = useMemo(

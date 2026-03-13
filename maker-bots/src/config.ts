@@ -70,18 +70,18 @@ export const config = {
 
   // ── Buyer bot parameters ───────────────────────────────────────────────────
   // Maximum pairs to buy per in-the-money market per cycle.
-  buyerQuantity: BigInt(optionalInt("BUYER_QUANTITY", 10)),
+  buyerQuantity: BigInt(optionalInt("BUYER_QUANTITY", 15)),
   // Minimum USDC proceeds (6-decimal raw units) from the YES market-sell to accept.
   // 0 = accept any price; raise this to avoid buying into illiquid books.
   buyerMinYesProceeds: BigInt(optionalInt("BUYER_MIN_YES_PROCEEDS", 0)),
   // Maximum number of resting orders to cross against in a single buyNoMarket call.
-  buyerMaxFills: optionalInt("BUYER_MAX_FILLS", 10),
+  buyerMaxFills: optionalInt("BUYER_MAX_FILLS", 15),
   // Only act if the BID side has at least this many units of depth at the best bid.
-  buyerMinBidDepth: BigInt(optionalInt("BUYER_MIN_BID_DEPTH", 5)),
+  buyerMinBidDepth: BigInt(optionalInt("BUYER_MIN_BID_DEPTH", 2)),
   // Always leave at least this many units on the BID side after buying.
-  buyerReserveDepth: BigInt(optionalInt("BUYER_RESERVE_DEPTH", 5)),
-  // Cron expression for the buyer bot (default: every 30 minutes).
-  buyerCron: optionalEnv("BUYER_CRON", "*/30 * * * *"),
+  buyerReserveDepth: BigInt(optionalInt("BUYER_RESERVE_DEPTH", 2)),
+  // Cron expression for the buyer bot (default: every 15 minutes).
+  buyerCron: optionalEnv("BUYER_CRON", "*/15 * * * *"),
   // Maximum time to wait for a tx receipt before treating it as failed.
   txWaitTimeoutMs: optionalInt("TX_WAIT_TIMEOUT_MS", 180_000),
 

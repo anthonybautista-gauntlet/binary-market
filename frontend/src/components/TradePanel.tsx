@@ -27,6 +27,10 @@ interface TradePanelProps {
   marketId: `0x${string}`;
   ticker?: string;
   strikePrice?: number;
+  /** When true, all trade actions are disabled (market has settled). */
+  settled?: boolean;
+  /** Unix seconds; trading is disabled when current time >= expiry (contract rejects). */
+  expiryTimestamp?: bigint;
 }
 
 const MARKET_ADDRESS = process.env.NEXT_PUBLIC_MERIDIAN_MARKET_ADDRESS as `0x${string}`;
@@ -92,8 +96,11 @@ function PositionBlock({ side, balance, onSwitchTab }: PositionBlockProps) {
   );
 }
 
-export function TradePanel({ marketId, ticker, strikePrice }: TradePanelProps) {
+export function TradePanel({ marketId, ticker, strikePrice, settled = false, expiryTimestamp }: TradePanelProps) {
   const { address } = useAccount();
+  const now = Math.floor(Date.now() / 1000);
+  const isExpired = expiryTimestamp != null && now >= Number(expiryTimestamp);
+  const isTradingClosed = settled || isExpired;
   const { mint: mintUSDC } = useMockUSDC(address);
   const { balance, allowance, formattedBalance, hasEnoughBalance, hasEnoughAllowance, refetch: refetchUSDC } = useUSDCData();
   const { yesBalance, noBalance, isApprovedForAll, refetch: refetchBalances } = useTokenBalances(marketId);
@@ -281,6 +288,23 @@ export function TradePanel({ marketId, ticker, strikePrice }: TradePanelProps) {
         </div>
       )}
 
+      {/* Market closed: no new trades */}
+      {isTradingClosed && (
+        <div className="mb-4 p-4 bg-slate-700/30 border border-slate-600/50 rounded-xl flex items-start gap-3">
+          <CheckCircle2 className="w-4 h-4 text-slate-400 mt-0.5 flex-shrink-0" />
+          <div>
+            <p className="text-[11px] font-black uppercase tracking-widest text-slate-400">
+              {settled ? 'Market settled' : 'Market expired'}
+            </p>
+            <p className="text-[11px] text-slate-500 mt-1">
+              {settled
+                ? 'Trading is closed. Redeem winning tokens from your portfolio.'
+                : 'This market has passed its expiry. No new orders or mints allowed.'}
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* Status banners */}
       {txError && (
         <div className="mb-4 p-3 bg-red-500/10 border border-red-500/20 rounded-xl flex items-start gap-2">
@@ -340,7 +364,7 @@ export function TradePanel({ marketId, ticker, strikePrice }: TradePanelProps) {
               )}
               <Button
                 onClick={handleBuyYes}
-                disabled={isPending || !address || !!insufficientBalance(yesRequiredUsdc)}
+                disabled={isTradingClosed || isPending || !address || !!insufficientBalance(yesRequiredUsdc)}
                 className="w-full bg-blue-600 hover:bg-blue-700 h-14 text-base font-black rounded-2xl shadow-xl shadow-blue-600/20 transition-all active:scale-[0.98] uppercase tracking-widest"
               >
                 {isPending ? <Loader2 className="animate-spin" /> : 'Place YES Order'}
@@ -368,7 +392,7 @@ export function TradePanel({ marketId, ticker, strikePrice }: TradePanelProps) {
               )}
               <Button
                 onClick={handleBuyNoMarket}
-                disabled={isPending || !address || !!insufficientBalance(noMarketRequiredUsdc)}
+                disabled={isTradingClosed || isPending || !address || !!insufficientBalance(noMarketRequiredUsdc)}
                 className="w-full bg-red-600 hover:bg-red-700 h-14 text-base font-black rounded-2xl shadow-xl shadow-red-600/20 transition-all active:scale-[0.98] uppercase tracking-widest"
               >
                 {isPending ? <Loader2 className="animate-spin" /> : 'Buy NO (Market)'}
@@ -407,7 +431,7 @@ export function TradePanel({ marketId, ticker, strikePrice }: TradePanelProps) {
           )}
           <Button
             onClick={handleSellYes}
-            disabled={isPending || !address || !!insufficientYes}
+            disabled={isTradingClosed || isPending || !address || !!insufficientYes}
             className="w-full bg-slate-600 hover:bg-slate-700 h-14 text-base font-black rounded-2xl shadow-xl shadow-slate-700/20 transition-all active:scale-[0.98] uppercase tracking-widest"
           >
             {isPending ? <Loader2 className="animate-spin" /> : 'Place Sell YES Order'}
@@ -453,7 +477,7 @@ export function TradePanel({ marketId, ticker, strikePrice }: TradePanelProps) {
           )}
           <Button
             onClick={handleSellNo}
-            disabled={isPending || !address || !!insufficientNo || !!insufficientBalance(sellNoRequiredUsdc)}
+            disabled={isTradingClosed || isPending || !address || !!insufficientNo || !!insufficientBalance(sellNoRequiredUsdc)}
             className="w-full bg-orange-600 hover:bg-orange-700 h-14 text-base font-black rounded-2xl shadow-xl shadow-orange-700/20 transition-all active:scale-[0.98] uppercase tracking-widest"
           >
             {isPending ? <Loader2 className="animate-spin" /> : 'Sell NO (Market)'}
@@ -483,7 +507,7 @@ export function TradePanel({ marketId, ticker, strikePrice }: TradePanelProps) {
               )}
               <Button
                 onClick={handleBuyNoLimit}
-                disabled={isPending || !address || !!insufficientBalance(noLimitRequiredUsdc)}
+                disabled={isTradingClosed || isPending || !address || !!insufficientBalance(noLimitRequiredUsdc)}
                 className="w-full bg-purple-600 hover:bg-purple-700 h-14 text-base font-black rounded-2xl shadow-xl shadow-purple-700/20 transition-all active:scale-[0.98] uppercase tracking-widest"
               >
                 {isPending ? <Loader2 className="animate-spin" /> : 'Buy NO (Limit)'}
@@ -507,7 +531,7 @@ export function TradePanel({ marketId, ticker, strikePrice }: TradePanelProps) {
           )}
           <Button
             onClick={handleMintPair}
-            disabled={isPending || !address || !!insufficientBalance(mintRequiredUsdc)}
+            disabled={isTradingClosed || isPending || !address || !!insufficientBalance(mintRequiredUsdc)}
             className="w-full bg-slate-700 hover:bg-slate-800 h-14 text-base font-black rounded-2xl shadow-xl shadow-slate-700/20 transition-all active:scale-[0.98] uppercase tracking-widest"
           >
             {isPending ? <Loader2 className="animate-spin" /> : 'Mint YES/NO Pairs'}

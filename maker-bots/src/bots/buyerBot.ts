@@ -1,8 +1,8 @@
 /**
  * Buyer Bot — directional NO buyer.
  *
- * Buys NO tokens in markets where the current asset price is above the
- * strike price (i.e. YES is the likely winner at expiry, making NO cheap).
+ * Buys NO tokens in markets where the current asset price is at or above the
+ * strike price (i.e. YES is at-the-money or in-the-money, making NO attractive).
  *
  * The bot does NOT drain the order book. Before buying it checks:
  *  - That there is a best bid on the book (the maker has posted BIDs).
@@ -11,7 +11,7 @@
  *    of depth on the book for other participants.
  *
  * Flow per in-the-money market:
- *   1. currentPrice > strikePrice?           (only act when YES is ITM)
+ *   1. currentPrice >= strikePrice?         (act when YES is ATM or ITM)
  *   2. bestBid > 0 && depth > minBidDepth?   (book has enough liquidity)
  *   3. buyQty = min(buyerQuantity, depth - reserveDepth)
  *   4. ensureUsdcBalance + ensureUsdcAllowance
@@ -103,8 +103,8 @@ export async function runBuyerBot(): Promise<void> {
     // Normalise to same expo -5 as strikePrice for direct comparison
     const currentPrice = normalisePriceToExpo5(priceEntry.price, priceEntry.expo);
 
-    // Only act when current price is strictly above the strike (YES is ITM)
-    if (currentPrice <= market.strikePrice) {
+    // Act when current price is at or above the strike (YES at-the-money or ITM)
+    if (currentPrice < market.strikePrice) {
       log.debug(
         {
           ticker,
@@ -112,7 +112,7 @@ export async function runBuyerBot(): Promise<void> {
           currentPrice: currentPrice.toString(),
           strikePrice: market.strikePrice.toString(),
         },
-        "Price at or below strike — skipping"
+        "Price below strike — skipping"
       );
       skipped++;
       continue;
@@ -165,7 +165,7 @@ export async function runBuyerBot(): Promise<void> {
         bookDepth: depth.toString(),
         buyQty: buyQty.toString(),
       },
-      "Buying NO — price above strike"
+      "Buying NO — price at or above strike"
     );
 
     // ── 5. Ensure USDC balance and allowance ──────────────────────────────
