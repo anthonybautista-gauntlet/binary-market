@@ -12,8 +12,17 @@ import Link from 'next/link';
 import { formatDistanceToNow } from 'date-fns';
 import { TickerLogo } from '@/components/TickerLogo';
 import { MarketStatusBadge } from '@/components/SettlementCountdown';
+import { PolymarketBadge } from '@/components/PolymarketCard';
 
 type StatusFilter = 'all' | 'live' | 'settled';
+type SortOption = 'newest' | 'oldest' | 'strike-asc' | 'strike-desc';
+
+const SORT_LABELS: Record<SortOption, string> = {
+  newest: 'Newest',
+  oldest: 'Oldest',
+  'strike-asc': 'Strike ↑',
+  'strike-desc': 'Strike ↓',
+};
 
 function FilterPill({
   label,
@@ -44,6 +53,7 @@ export default function MarketsPage() {
 
   const [tickerFilter, setTickerFilter] = useState<string>('ALL');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('live');
+  const [sortBy, setSortBy] = useState<SortOption>('newest');
 
   // Derive the unique tickers that actually have markets on-chain
   const availableTickers = useMemo(
@@ -52,13 +62,30 @@ export default function MarketsPage() {
   );
 
   const filtered = useMemo(() => {
-    return markets.filter(market => {
+    const result = markets.filter(market => {
       if (tickerFilter !== 'ALL' && market.ticker !== tickerFilter) return false;
       if (statusFilter === 'live' && market.settled) return false;
       if (statusFilter === 'settled' && !market.settled) return false;
       return true;
     });
-  }, [markets, tickerFilter, statusFilter]);
+
+    result.sort((a, b) => {
+      switch (sortBy) {
+        case 'newest':
+          return Number(b.expiryTimestamp) - Number(a.expiryTimestamp);
+        case 'oldest':
+          return Number(a.expiryTimestamp) - Number(b.expiryTimestamp);
+        case 'strike-asc':
+          return Number(a.strikePrice) - Number(b.strikePrice);
+        case 'strike-desc':
+          return Number(b.strikePrice) - Number(a.strikePrice);
+        default:
+          return 0;
+      }
+    });
+
+    return result;
+  }, [markets, tickerFilter, statusFilter, sortBy]);
 
   return (
     <div className="flex flex-col min-h-screen">
@@ -108,6 +135,21 @@ export default function MarketsPage() {
                   label={s === 'all' ? 'All' : s.charAt(0).toUpperCase() + s.slice(1)}
                   active={statusFilter === s}
                   onClick={() => setStatusFilter(s)}
+                />
+              ))}
+            </div>
+
+            {/* Sort */}
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-[10px] text-slate-600 uppercase font-black tracking-widest mr-1">
+                Sort
+              </span>
+              {(Object.keys(SORT_LABELS) as SortOption[]).map(opt => (
+                <FilterPill
+                  key={opt}
+                  label={SORT_LABELS[opt]}
+                  active={sortBy === opt}
+                  onClick={() => setSortBy(opt)}
                 />
               ))}
             </div>
@@ -168,6 +210,13 @@ export default function MarketsPage() {
                         </span>
                       </div>
 
+                      <div className="flex justify-between items-center py-1">
+                        <PolymarketBadge
+                          ticker={ticker}
+                          expiryTimestamp={market.expiryTimestamp}
+                        />
+                      </div>
+
                       <Button
                         asChild
                         className="w-full bg-slate-800 hover:bg-blue-600 text-white transition-all font-bold group-hover:animate-glow"
@@ -184,7 +233,7 @@ export default function MarketsPage() {
               <div className="col-span-full py-16 text-center border-2 border-dashed border-slate-800 rounded-3xl">
                 <p className="text-slate-500 font-outfit text-lg mb-2">No markets match your filters.</p>
                 <button
-                  onClick={() => { setTickerFilter('ALL'); setStatusFilter('all'); }}
+                  onClick={() => { setTickerFilter('ALL'); setStatusFilter('all'); setSortBy('newest'); }}
                   className="text-sm text-blue-400 hover:text-blue-300 underline"
                 >
                   Clear filters

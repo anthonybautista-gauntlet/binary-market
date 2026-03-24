@@ -12,6 +12,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import Link from 'next/link';
 import { formatDistanceToNow } from 'date-fns';
 import { TickerLogo } from '@/components/TickerLogo';
+import { PolymarketCard } from '@/components/PolymarketCard';
 
 export default function TickerPage({ params }: { params: Promise<{ symbol: string }> }) {
   const { symbol } = use(params);
@@ -133,6 +134,13 @@ export default function TickerPage({ params }: { params: Promise<{ symbol: strin
                     </p>
                 </CardContent>
             </Card>
+
+            {activeTickerMarkets.length > 0 && (
+              <PolymarketCard
+                ticker={symbol}
+                expiryTimestamp={activeTickerMarkets[0].expiryTimestamp}
+              />
+            )}
           </div>
         </div>
       </main>

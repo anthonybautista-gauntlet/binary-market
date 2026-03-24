@@ -13,6 +13,7 @@ import { SettlementCountdown } from '@/components/SettlementCountdown';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Card } from '@/components/ui/card';
 import { TickerLogo } from '@/components/TickerLogo';
+import { PolymarketCard } from '@/components/PolymarketCard';
 
 export default function MarketDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -102,6 +103,11 @@ export default function MarketDetailPage({ params }: { params: Promise<{ id: str
             <OrderBook marketId={marketId} />
             <OpenOrders marketId={marketId} />
             <MarketActivity marketId={marketId} />
+            <PolymarketCard
+              ticker={ticker}
+              expiryTimestamp={market.expiryTimestamp}
+              strikeDollars={Math.round(strikePrice)}
+            />
           </div>
 
           <div className="lg:col-span-2 order-1 lg:order-2 space-y-8">
